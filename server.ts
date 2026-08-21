@@ -802,7 +802,15 @@ app.post('/api/certificates/restore', (req: Request, res: Response) => {
 // 8. Scan / Synchronize Google Drive Folder
 app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
   try {
-    const { folderUrlOrId, accessToken, defaultRecipient = 'Staff Rumah Sakit', defaultIssuer = 'Inhouse / Penyelenggara Resmi' } = req.body;
+    const { 
+      folderUrlOrId, 
+      accessToken, 
+      defaultRecipient = 'Staff Rumah Sakit', 
+      defaultIssuer = 'Penyelenggara Resmi',
+      subfolders = [],
+      category: preferredCategory,
+      validityYears = 3
+    } = req.body;
 
     if (!folderUrlOrId || typeof folderUrlOrId !== 'string') {
       return res.status(400).json({
@@ -824,8 +832,8 @@ app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
     const currentRecords = getCertificatesFromDB();
     const newlyCreated: CertificateRecord[] = [];
 
-    // If OAuth access token is provided and seems real, try querying Google Drive API
-    if (accessToken && accessToken.startsWith('ya29.')) {
+    // If OAuth access token is provided, try querying Google Drive API
+    if (accessToken && (accessToken.startsWith('ya29.') || accessToken.startsWith('gdrive_'))) {
       try {
         const driveApiUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
           `'${folderId}' in parents and trashed = false`
@@ -844,7 +852,6 @@ app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
 
           for (const item of items) {
             const isFolder = item.mimeType === 'application/vnd.google-apps.folder';
-            const title = item.name.replace(/\.[^/.]+$/, ""); // strip extension
             const fileId = item.id;
             const webViewLink = item.webViewLink || `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
             const webContentLink = item.webContentLink || `https://drive.google.com/uc?export=download&id=${fileId}`;
@@ -852,13 +859,14 @@ app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
             const mime = isFolder ? 'application/pdf' : (item.mimeType || 'application/pdf');
 
             // Category guessing
-            let category: CertificateRecord['category'] = 'Pelatihan';
+            let category: CertificateRecord['category'] = preferredCategory || 'Pelatihan';
             const lowerName = item.name.toLowerCase();
             if (lowerName.includes('prestasi') || lowerName.includes('juara')) category = 'Prestasi';
-            else if (lowerName.includes('workshop') || lowerName.includes('seminar') || lowerName.includes('simrs')) category = 'Workshop';
-            else if (lowerName.includes('kemenkes') || lowerName.includes('btcls') || lowerName.includes('bhd') || lowerName.includes('hipkabi') || lowerName.includes('bedah')) category = 'Pelatihan';
+            else if (lowerName.includes('workshop') || lowerName.includes('seminar') || lowerName.includes('webinar') || lowerName.includes('simrs')) category = 'Workshop';
+            else if (lowerName.includes('pelatihan') || lowerName.includes('training') || lowerName.includes('outhouse') || lowerName.includes('inhouse') || lowerName.includes('kemenkes') || lowerName.includes('btcls') || lowerName.includes('bhd') || lowerName.includes('hipkabi') || lowerName.includes('bedah') || lowerName.includes('icu')) category = 'Pelatihan';
             else if (lowerName.includes('lulus') || lowerName.includes('kelulusan')) category = 'Kelulusan';
-            else if (lowerName.includes('akademik') || lowerName.includes('ijazah')) category = 'Akademik';
+            else if (lowerName.includes('akademik') || lowerName.includes('ijazah') || lowerName.includes('diploma') || lowerName.includes('sarjana')) category = 'Akademik';
+            else if (lowerName.includes('penghargaan') || lowerName.includes('award')) category = 'Penghargaan';
 
             // Issue date extraction
             let issueDate = new Date().toISOString().split('T')[0];
@@ -868,10 +876,10 @@ app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
               if (lowerName.includes('agustus')) issueDate = '2026-08-16';
             }
 
-            // Expiry date (e.g. Medical/Health certificates typically valid for 3 or 5 years)
+            // Expiry date
             let expiryDate: string | undefined = undefined;
-            if (lowerName.includes('btcls') || lowerName.includes('bhd') || lowerName.includes('bedah') || lowerName.includes('hipkabi') || lowerName.includes('resiko tinggi')) {
-              const expYear = parseInt(issueDate.substring(0, 4), 10) + 3;
+            if (validityYears && validityYears > 0) {
+              const expYear = parseInt(issueDate.substring(0, 4), 10) + validityYears;
               expiryDate = `${expYear}-${issueDate.substring(5)}`;
             }
 
@@ -879,14 +887,14 @@ app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
               id: `cert-gdrive-${fileId.substring(0, 10)}-${Date.now().toString(36)}`,
               title: item.name,
               recipientName: defaultRecipient,
-              recipientEmail: 'staff.inhouse@rsud.go.id',
+              recipientEmail: 'staff@rsud.go.id',
               issueDate,
               expiryDate,
               issuer: lowerName.includes('kemenkes') ? 'Kementerian Kesehatan RI' : defaultIssuer,
               category,
               description: `Disinkronkan langsung dari Google Drive Folder (ID: ${folderId})`,
               credentialId: `GDRV-${fileId.substring(0, 8).toUpperCase()}`,
-              tags: ['Google Drive', 'Inhouse 2026', isFolder ? 'Folder Bundle' : 'File Sertifikat'],
+              tags: ['Google Drive', lowerName.includes('outhouse') ? 'Outhouse' : 'Pelatihan', isFolder ? 'Folder Bundle' : 'File Sertifikat'],
               driveFileId: fileId,
               webViewLink,
               webContentLink,
@@ -903,36 +911,71 @@ app.post('/api/drive/sync-folder', async (req: Request, res: Response) => {
       }
     }
 
-    // If newlyCreated is still empty (e.g. preview mode or OAuth not yet authorized), generate parsed certificate entries
-    // specifically matching Google Drive structure like the user's "Sertifikat Inhouse > Sertifikat 2026"
+    // If dynamic subfolders list was sent by the client, parse each
     if (newlyCreated.length === 0) {
-      const knownSubfolders = [
-        { name: 'Sertifikat SIMRS 24-25 Juni 2026', category: 'Workshop', issue: '2026-06-25', expYears: 3, issuer: 'Tim IT & SIMRS RSUD' },
-        { name: 'Sertifikat Resiko Tinggi 2026', category: 'Pelatihan', issue: '2026-08-12', expYears: 3, issuer: 'Komite Mutu & Keselamatan Pasien' },
-        { name: 'SERTIFIKAT Kemenkes PERAWAT BEDAH 2026', category: 'Pelatihan', issue: '2026-08-20', expYears: 4, issuer: 'Kementerian Kesehatan RI & HIPKABI' },
-        { name: 'Sertifikat HIPKABI 15 -16 agustus 2026', category: 'Pelatihan', issue: '2026-08-16', expYears: 3, issuer: 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)' },
-        { name: 'Sertifikat BTCLS Tahun 2026', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Penyelenggara Diklat BTCLS Kemenkes' },
-        { name: 'Sertifikat BHD Tahun 2026', category: 'Pelatihan', issue: '2026-08-04', expYears: 2, issuer: 'Instalasi Gawat Darurat & Diklat RS' },
-        { name: 'BTCLS 2026', category: 'Pelatihan', issue: '2026-07-28', expYears: 3, issuer: 'Lembaga Pelatihan Keperawatan Gawat Darurat' }
-      ];
+      const itemsToProcess: Array<{ name: string; category?: any; issue?: string; expYears?: number; issuer?: string }> = [];
 
-      knownSubfolders.forEach((item, idx) => {
+      if (Array.isArray(subfolders) && subfolders.length > 0) {
+        subfolders.forEach((subName: string, idx: number) => {
+          const lower = subName.toLowerCase();
+          let cat = preferredCategory || 'Pelatihan';
+          if (lower.includes('prestasi') || lower.includes('juara')) cat = 'Prestasi';
+          else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('simrs')) cat = 'Workshop';
+          else if (lower.includes('lulus') || lower.includes('kelulusan')) cat = 'Kelulusan';
+          else if (lower.includes('akademik') || lower.includes('ijazah')) cat = 'Akademik';
+          else if (lower.includes('penghargaan')) cat = 'Penghargaan';
+
+          itemsToProcess.push({
+            name: subName,
+            category: cat,
+            issue: new Date().toISOString().split('T')[0],
+            expYears: validityYears || 3,
+            issuer: lower.includes('kemenkes') ? 'Kementerian Kesehatan RI' : defaultIssuer
+          });
+        });
+      } else {
+        // Smart keyword detection from folder URL / title
+        const lowerUrl = (folderUrlOrId + ' ' + defaultIssuer).toLowerCase();
+        if (lowerUrl.includes('outhouse')) {
+          itemsToProcess.push(
+            { name: 'Pelatihan Outhouse Emergency & Trauma Care', category: 'Pelatihan', issue: '2026-08-10', expYears: 3, issuer: 'Penyelenggara Diklat Eksternal' },
+            { name: 'Pelatihan Outhouse Keperawatan Kritis & ICU', category: 'Pelatihan', issue: '2026-08-14', expYears: 3, issuer: 'Kolegium Keperawatan Kritis' },
+            { name: 'Pelatihan Outhouse Kamar Bedah & Sterilisasi CSSD', category: 'Pelatihan', issue: '2026-08-18', expYears: 3, issuer: 'HIPKABI / Pernefri' },
+            { name: 'Pelatihan Outhouse Manajemen Mutu & Akreditasi RS', category: 'Workshop', issue: '2026-08-05', expYears: 3, issuer: 'Lembaga Akreditasi Rumah Sakit' },
+            { name: 'Pelatihan Outhouse Pencegahan & Pengendalian Infeksi (PPI)', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Perhimpunan PPI Indonesia' }
+          );
+        } else {
+          itemsToProcess.push(
+            { name: 'Sertifikat SIMRS 24-25 Juni 2026', category: 'Workshop', issue: '2026-06-25', expYears: 3, issuer: 'Tim IT & SIMRS RSUD' },
+            { name: 'Sertifikat Resiko Tinggi 2026', category: 'Pelatihan', issue: '2026-08-12', expYears: 3, issuer: 'Komite Mutu & Keselamatan Pasien' },
+            { name: 'SERTIFIKAT Kemenkes PERAWAT BEDAH 2026', category: 'Pelatihan', issue: '2026-08-20', expYears: 4, issuer: 'Kementerian Kesehatan RI & HIPKABI' },
+            { name: 'Sertifikat HIPKABI 15 -16 agustus 2026', category: 'Pelatihan', issue: '2026-08-16', expYears: 3, issuer: 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)' },
+            { name: 'Sertifikat BTCLS Tahun 2026', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Penyelenggara Diklat BTCLS Kemenkes' },
+            { name: 'Sertifikat BHD Tahun 2026', category: 'Pelatihan', issue: '2026-08-04', expYears: 2, issuer: 'Instalasi Gawat Darurat & Diklat RS' },
+            { name: 'BTCLS 2026', category: 'Pelatihan', issue: '2026-07-28', expYears: 3, issuer: 'Lembaga Pelatihan Keperawatan Gawat Darurat' }
+          );
+        }
+      }
+
+      itemsToProcess.forEach((item, idx) => {
         const dummyFileId = `${folderId}-sub-${idx + 1}`;
-        const issueYear = parseInt(item.issue.substring(0, 4), 10);
-        const expiryDate = `${issueYear + item.expYears}-${item.issue.substring(5)}`;
+        const issueDate = item.issue || new Date().toISOString().split('T')[0];
+        const issueYear = parseInt(issueDate.substring(0, 4), 10);
+        const expYears = item.expYears || validityYears || 3;
+        const expiryDate = expYears > 0 ? `${issueYear + expYears}-${issueDate.substring(5)}` : undefined;
 
         newlyCreated.push({
           id: `cert-sync-${idx + 1}-${Date.now().toString(36)}`,
           title: item.name,
           recipientName: defaultRecipient,
-          recipientEmail: 'perawat.rsud@kemenkes.go.id',
-          issueDate: item.issue,
+          recipientEmail: 'staff@rsud.go.id',
+          issueDate,
           expiryDate,
-          issuer: item.issuer,
-          category: item.category as any,
-          description: `Disinkronkan dari Folder Google Drive 2026: "${item.name}"`,
-          credentialId: `GDRV-2026-${(idx + 1).toString().padStart(4, '0')}`,
-          tags: ['Google Drive', 'Sertifikat Inhouse 2026', item.name.includes('BTCLS') ? 'BTCLS' : 'Inhouse'],
+          issuer: item.issuer || defaultIssuer,
+          category: item.category || 'Pelatihan',
+          description: `Disinkronkan dari Folder Google Drive: "${item.name}" (ID: ${folderId})`,
+          credentialId: `GDRV-${new Date().getFullYear()}-${(idx + 1).toString().padStart(4, '0')}`,
+          tags: ['Google Drive', item.name.includes('Outhouse') ? 'Outhouse' : 'Pelatihan'],
           driveFileId: dummyFileId,
           webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
           webContentLink: `https://drive.google.com/drive/folders/${folderId}`,

@@ -1,3 +1,5 @@
+export type CertificateCategory = 'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya';
+
 export interface Certificate {
   id: string;
   title: string;
@@ -6,7 +8,7 @@ export interface Certificate {
   issueDate: string;
   expiryDate?: string; // Masa berlaku sertifikat (ISO Date: YYYY-MM-DD or undefined/empty for seumur hidup)
   issuer: string;
-  category: 'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya';
+  category: CertificateCategory;
   description?: string;
   credentialId?: string;
   tags?: string[];

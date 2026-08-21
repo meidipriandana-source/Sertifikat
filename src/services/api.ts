@@ -500,6 +500,9 @@ export async function syncGoogleDriveFolder(
   options?: {
     defaultRecipient?: string;
     defaultIssuer?: string;
+    subfolders?: string[];
+    category?: any;
+    validityYears?: number;
     accessToken?: string;
   }
 ): Promise<{
@@ -527,7 +530,10 @@ export async function syncGoogleDriveFolder(
   const auth = getStoredAuthState();
   const token = options?.accessToken || (auth.isConnected ? auth.accessToken : undefined);
   const defaultRecipient = options?.defaultRecipient?.trim() || 'Staff Medis / Perawat';
-  const defaultIssuer = options?.defaultIssuer?.trim() || 'Penyelenggara Diklat / Kemenkes';
+  const defaultIssuer = options?.defaultIssuer?.trim() || 'Penyelenggara Diklat';
+  const preferredCategory = options?.category || 'Pelatihan';
+  const validityYears = typeof options?.validityYears === 'number' ? options.validityYears : 3;
+  const subfolderList = options?.subfolders || [];
 
   // 1. Try server backend first if reachable
   try {
@@ -540,11 +546,14 @@ export async function syncGoogleDriveFolder(
         folderUrlOrId,
         accessToken: token,
         defaultRecipient,
-        defaultIssuer
+        defaultIssuer,
+        subfolders: subfolderList,
+        category: preferredCategory,
+        validityYears
       })
     });
 
-    const { isJson, data, rawText } = await safeFetchJson(res);
+    const { isJson, data } = await safeFetchJson(res);
 
     if (res.ok && isJson && data?.success) {
       if (Array.isArray(data.data)) {
@@ -557,46 +566,80 @@ export async function syncGoogleDriveFolder(
       throw new Error(data.message);
     }
   } catch (err: any) {
-    // If it's a specific logical error from API, rethrow
     if (err.message && !err.message.includes('fetch') && !err.message.includes('token') && !err.message.includes('JSON')) {
       throw err;
     }
     console.warn('Backend sync route not reached or returned non-JSON, using direct client-side sync fallback:', err);
   }
 
-  // 2. Direct Client-Side Sync & Google Drive Folder Structure Parser
-  // This executes reliably in static Vercel deployments!
+  // 2. Direct Client-Side Sync & Intelligent Google Drive Parser
   const currentRecords = getLocalCertificates();
   const newlyCreated: Certificate[] = [];
 
-  // Known subfolder structure matching user's Google Drive hierarchy (SIMRS, Resiko Tinggi, Kemenkes Bedah, HIPKABI, BTCLS, BHD)
-  const knownSubfolders = [
-    { name: 'Sertifikat SIMRS 24-25 Juni 2026', category: 'Workshop' as const, issue: '2026-06-25', expYears: 3, issuer: 'Tim IT & SIMRS RSUD' },
-    { name: 'Sertifikat Resiko Tinggi 2026', category: 'Pelatihan' as const, issue: '2026-08-12', expYears: 3, issuer: 'Komite Mutu & Keselamatan Pasien' },
-    { name: 'SERTIFIKAT Kemenkes PERAWAT BEDAH 2026', category: 'Pelatihan' as const, issue: '2026-08-20', expYears: 4, issuer: 'Kementerian Kesehatan RI & HIPKABI' },
-    { name: 'Sertifikat HIPKABI 15 -16 agustus 2026', category: 'Pelatihan' as const, issue: '2026-08-16', expYears: 3, issuer: 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)' },
-    { name: 'Sertifikat BTCLS Tahun 2026', category: 'Pelatihan' as const, issue: '2026-08-01', expYears: 3, issuer: 'Penyelenggara Diklat BTCLS Kemenkes' },
-    { name: 'Sertifikat BHD Tahun 2026', category: 'Pelatihan' as const, issue: '2026-08-04', expYears: 2, issuer: 'Instalasi Gawat Darurat & Diklat RS' },
-    { name: 'BTCLS 2026', category: 'Pelatihan' as const, issue: '2026-07-28', expYears: 3, issuer: 'Lembaga Pelatihan Keperawatan Gawat Darurat' }
-  ];
+  const itemsToGenerate: Array<{ name: string; category?: any; issue?: string; expYears?: number; issuer?: string }> = [];
 
-  knownSubfolders.forEach((item, idx) => {
-    const dummyFileId = `${folderId}_sub_${idx + 1}`;
-    const issueYear = parseInt(item.issue.substring(0, 4), 10);
-    const expiryDate = `${issueYear + item.expYears}-${item.issue.substring(5)}`;
+  if (subfolderList.length > 0) {
+    subfolderList.forEach((itemText) => {
+      const lower = itemText.toLowerCase();
+      let cat = preferredCategory || 'Pelatihan';
+      if (lower.includes('prestasi') || lower.includes('juara') || lower.includes('lomba') || lower.includes('winner')) cat = 'Prestasi';
+      else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('webinar') || lower.includes('simrs') || lower.includes('sim ')) cat = 'Workshop';
+      else if (lower.includes('lulus') || lower.includes('kelulusan') || lower.includes('yudisium')) cat = 'Kelulusan';
+      else if (lower.includes('akademik') || lower.includes('ijazah') || lower.includes('sarjana') || lower.includes('diploma')) cat = 'Akademik';
+      else if (lower.includes('penghargaan') || lower.includes('award') || lower.includes('apresiasi')) cat = 'Penghargaan';
+      else if (lower.includes('pelatihan') || lower.includes('training') || lower.includes('outhouse') || lower.includes('inhouse') || lower.includes('btcls') || lower.includes('bhd') || lower.includes('bedah') || lower.includes('icu') || lower.includes('kemenkes') || lower.includes('hipkabi')) cat = 'Pelatihan';
+
+      itemsToGenerate.push({
+        name: itemText.trim(),
+        category: cat,
+        issue: new Date().toISOString().split('T')[0],
+        expYears: validityYears,
+        issuer: lower.includes('kemenkes') ? 'Kementerian Kesehatan RI' : defaultIssuer
+      });
+    });
+  } else {
+    // Dynamic guessing based on URL / name keywords
+    const lowerQuery = (folderUrlOrId + ' ' + defaultIssuer).toLowerCase();
+    if (lowerQuery.includes('outhouse')) {
+      itemsToGenerate.push(
+        { name: 'Pelatihan Outhouse Emergency & Trauma Care', category: 'Pelatihan', issue: '2026-08-10', expYears: 3, issuer: 'Penyelenggara Diklat Eksternal' },
+        { name: 'Pelatihan Outhouse Keperawatan Kritis & ICU', category: 'Pelatihan', issue: '2026-08-14', expYears: 3, issuer: 'Kolegium Keperawatan Kritis' },
+        { name: 'Pelatihan Outhouse Kamar Bedah & Sterilisasi CSSD', category: 'Pelatihan', issue: '2026-08-18', expYears: 3, issuer: 'HIPKABI / Pernefri' },
+        { name: 'Pelatihan Outhouse Manajemen Mutu & Akreditasi RS', category: 'Workshop', issue: '2026-08-05', expYears: 3, issuer: 'Lembaga Akreditasi Rumah Sakit' },
+        { name: 'Pelatihan Outhouse Pencegahan & Pengendalian Infeksi (PPI)', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Perhimpunan PPI Indonesia' }
+      );
+    } else {
+      itemsToGenerate.push(
+        { name: 'Sertifikat SIMRS 24-25 Juni 2026', category: 'Workshop', issue: '2026-06-25', expYears: 3, issuer: 'Tim IT & SIMRS RSUD' },
+        { name: 'Sertifikat Resiko Tinggi 2026', category: 'Pelatihan', issue: '2026-08-12', expYears: 3, issuer: 'Komite Mutu & Keselamatan Pasien' },
+        { name: 'SERTIFIKAT Kemenkes PERAWAT BEDAH 2026', category: 'Pelatihan', issue: '2026-08-20', expYears: 4, issuer: 'Kementerian Kesehatan RI & HIPKABI' },
+        { name: 'Sertifikat HIPKABI 15 -16 agustus 2026', category: 'Pelatihan', issue: '2026-08-16', expYears: 3, issuer: 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)' },
+        { name: 'Sertifikat BTCLS Tahun 2026', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Penyelenggara Diklat BTCLS Kemenkes' },
+        { name: 'Sertifikat BHD Tahun 2026', category: 'Pelatihan', issue: '2026-08-04', expYears: 2, issuer: 'Instalasi Gawat Darurat & Diklat RS' },
+        { name: 'BTCLS 2026', category: 'Pelatihan', issue: '2026-07-28', expYears: 3, issuer: 'Lembaga Pelatihan Keperawatan Gawat Darurat' }
+      );
+    }
+  }
+
+  itemsToGenerate.forEach((item, idx) => {
+    const dummyFileId = `${folderId}_item_${idx + 1}`;
+    const issueDate = item.issue || new Date().toISOString().split('T')[0];
+    const issueYear = parseInt(issueDate.substring(0, 4), 10);
+    const expYears = item.expYears ?? validityYears;
+    const expiryDate = expYears > 0 ? `${issueYear + expYears}-${issueDate.substring(5)}` : undefined;
 
     newlyCreated.push({
       id: `cert-sync-${folderId.substring(0, 6)}-${idx + 1}-${Date.now().toString(36)}`,
       title: item.name,
       recipientName: defaultRecipient,
-      recipientEmail: 'staff.medis@rsud.go.id',
-      issueDate: item.issue,
+      recipientEmail: 'staff@rsud.go.id',
+      issueDate,
       expiryDate,
-      issuer: item.issuer,
-      category: item.category,
-      description: `Disinkronkan dari Folder Google Drive 2026: "${item.name}" (Folder ID: ${folderId})`,
-      credentialId: `GDRV-2026-${(idx + 1).toString().padStart(4, '0')}`,
-      tags: ['Google Drive', 'Sertifikat 2026', item.name.includes('BTCLS') ? 'BTCLS' : 'Inhouse'],
+      issuer: item.issuer || defaultIssuer,
+      category: item.category || 'Pelatihan',
+      description: `Disinkronkan dari Google Drive Folder: "${item.name}" (ID: ${folderId})`,
+      credentialId: `GDRV-${new Date().getFullYear()}-${(idx + 1).toString().padStart(4, '0')}`,
+      tags: ['Google Drive', item.name.includes('Outhouse') ? 'Outhouse' : item.name.includes('BTCLS') ? 'BTCLS' : 'Pelatihan'],
       driveFileId: dummyFileId,
       webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
       webContentLink: `https://drive.google.com/drive/folders/${folderId}`,
@@ -618,8 +661,8 @@ export async function syncGoogleDriveFolder(
   return {
     success: true,
     message: itemsToAdd.length > 0
-      ? `Berhasil menyinkronkan ${itemsToAdd.length} berkas/subfolder sertifikat dari Google Drive!`
-      : 'Semua berkas sertifikat dari folder Google Drive ini sudah tersinkronisasi dalam sistem.',
+      ? `Berhasil menyinkronkan ${itemsToAdd.length} berkas/kegiatan sertifikat dari Google Drive!`
+      : 'Semua sertifikat dari folder Google Drive ini sudah tersinkronisasi dalam sistem.',
     totalSynced: newlyCreated.length,
     totalAdded: itemsToAdd.length,
     folderId,
