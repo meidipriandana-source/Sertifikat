@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Manajemen Sertifikat",
+    "description": "Aplikasi manajemen sertifikat digital dengan penyimpanan otomatis dokumen/gambar ke Google Drive, pemantauan masa berlaku otomatis (peringatan < 30 hari), dan sinkronisasi data.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
