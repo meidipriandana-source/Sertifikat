@@ -1,5 +1,5 @@
 import React from 'react';
-import { Award, Cloud, HardDrive, Plus, BookOpen, Download, RefreshCw, CheckCircle2, ShieldCheck, Moon, Sun, RotateCcw, Bell } from 'lucide-react';
+import { Cloud, HardDrive, Plus, BookOpen, Download, RefreshCw, CheckCircle2, ShieldCheck, Moon, Sun, RotateCcw, Bell } from 'lucide-react';
 import { GoogleAuthState } from '../services/googleAuth';
 
 interface HeaderProps {
@@ -34,29 +34,24 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header id="app-header" className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-2xs transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between py-4 gap-4">
           
-          {/* Logo & Title */}
-          <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-950/50 shrink-0">
-              <Award className="w-6 h-6" />
+          {/* Title & System Info */}
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                Sertifikat Diklat RSUD dr.H.Jusuf.SK
+              </h1>
+              <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/60">
+                Drive API v3
+              </span>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                  CertifyDrive
-                </h1>
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/60">
-                  Drive API v3
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
-                <span>Sistem Manajemen Sertifikat Digital</span>
-                <span className="text-slate-300 dark:text-slate-600">•</span>
-                <span className="text-slate-600 dark:text-slate-300 font-semibold">Cloud Auto-Sync</span>
-              </p>
-            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
+              <span>Sistem Manajemen Sertifikat Digital</span>
+              <span className="text-slate-300 dark:text-slate-600">•</span>
+              <span className="text-slate-600 dark:text-slate-300 font-semibold">Cloud Auto-Sync</span>
+            </p>
           </div>
 
           {/* Action Bar & User Profile / Status */}

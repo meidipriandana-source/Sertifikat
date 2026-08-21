@@ -459,7 +459,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
         </div>
       ) : viewMode === 'grid' ? (
         /* GRID VIEW */
-        <div className="pt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="pt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-5">
           {displayedCertificates.map((cert) => {
             const catStyle = CATEGORY_COLORS[cert.category] || CATEGORY_COLORS.Lainnya;
             const isPdf = cert.mimeType === 'application/pdf';
@@ -472,7 +472,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
               >
                 {/* Card Top Preview Bar */}
                 <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                       isPdf 
                         ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/50' 
@@ -600,18 +600,18 @@ export const CertificateList: React.FC<CertificateListProps> = ({
         </div>
       ) : (
         /* TABLE VIEW */
-        <div className="pt-4 overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
-            <thead className="border-b border-slate-100 dark:border-slate-800">
-              <tr className="text-[10px] uppercase text-slate-400 dark:text-slate-500 tracking-widest font-bold">
-                <th className="pb-3 px-3">Nama Sertifikat</th>
-                <th className="pb-3 px-3">Pemilik</th>
-                <th className="pb-3 px-3">Kategori</th>
-                <th className="pb-3 px-3">Lembaga Penerbit</th>
-                <th className="pb-3 px-3 text-center">Tanggal Terbit</th>
-                <th className="pb-3 px-3">Masa Berlaku</th>
-                <th className="pb-3 px-3">Format / Ukuran</th>
-                <th className="pb-3 px-3 text-right">Aksi</th>
+        <div className="pt-4 overflow-x-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs">
+          <table className="w-full min-w-[1100px] text-left text-xs text-slate-600 dark:text-slate-300 border-collapse">
+            <thead className="bg-slate-50/90 dark:bg-slate-850/90 border-b border-slate-200/80 dark:border-slate-800">
+              <tr className="text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider font-bold">
+                <th className="py-3.5 px-4 min-w-[280px]">Nama Sertifikat</th>
+                <th className="py-3.5 px-4 min-w-[190px]">Pemilik / Peserta</th>
+                <th className="py-3.5 px-3 min-w-[110px]">Kategori</th>
+                <th className="py-3.5 px-4 min-w-[200px]">Lembaga Penerbit</th>
+                <th className="py-3.5 px-3 min-w-[120px] text-center">Tanggal Terbit</th>
+                <th className="py-3.5 px-4 min-w-[160px]">Masa Berlaku</th>
+                <th className="py-3.5 px-3 min-w-[140px] whitespace-nowrap">Format / Ukuran</th>
+                <th className="py-3.5 px-4 min-w-[190px] text-right whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -621,47 +621,64 @@ export const CertificateList: React.FC<CertificateListProps> = ({
 
                 return (
                   <tr key={cert.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="py-3.5 px-3 font-semibold text-slate-900 dark:text-white">
-                      <div className="flex items-center gap-2.5">
-                        <div className={`p-2 rounded-xl ${
+                    <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2.5 rounded-xl shrink-0 ${
                           isPdf 
                             ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400' 
                             : 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400'
                         }`}>
                           {isPdf ? <FileText className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p 
                             onClick={() => onSelectCertificate(cert)}
-                            className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 font-bold truncate max-w-xs transition-colors"
+                            className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 font-bold text-slate-900 dark:text-slate-100 transition-colors leading-tight"
+                            title={cert.title}
                           >
                             {cert.title}
                           </p>
-                          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{cert.credentialId}</p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{cert.credentialId}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="py-3.5 px-3 font-medium text-slate-700 dark:text-slate-200">{cert.recipientName}</td>
-                    <td className="py-3.5 px-3">
+                    <td className="py-4 px-4 font-medium text-slate-800 dark:text-slate-200">
+                      <div className="flex items-center gap-2">
+                        <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="font-semibold text-slate-900 dark:text-slate-100">{cert.recipientName}</span>
+                      </div>
+                    </td>
+                    <td className="py-4 px-3">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}>
                         {cert.category}
                       </span>
                     </td>
-                    <td className="py-3.5 px-3 text-slate-500 dark:text-slate-400 truncate max-w-xs">{cert.issuer}</td>
-                    <td className="py-3.5 px-3 text-center whitespace-nowrap text-slate-500 dark:text-slate-400">{cert.issueDate}</td>
-                    <td className="py-3.5 px-3 whitespace-nowrap">
+                    <td className="py-4 px-4 text-slate-600 dark:text-slate-300">
+                      <div className="flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>{cert.issuer}</span>
+                      </div>
+                    </td>
+                    <td className="py-4 px-3 text-center whitespace-nowrap text-slate-600 dark:text-slate-300 font-mono text-[11px]">
+                      {cert.issueDate}
+                    </td>
+                    <td className="py-4 px-4 whitespace-nowrap">
                       <ExpiryIndicatorBadge expiryDate={cert.expiryDate} variant="pill" />
                     </td>
-                    <td className="py-3.5 px-3 whitespace-nowrap text-slate-500 dark:text-slate-400">
-                      {isPdf ? 'PDF' : 'IMG'} • {formatBytes(cert.fileSize)}
+                    <td className="py-4 px-3 whitespace-nowrap text-slate-600 dark:text-slate-300 text-[11px] font-medium">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[10px] font-bold mr-1.5">
+                        {isPdf ? 'PDF' : 'IMG'}
+                      </span>
+                      {formatBytes(cert.fileSize)}
                     </td>
-                    <td className="py-3.5 px-3 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-2">
+                    <td className="py-4 px-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1.5">
                         <a
                           href={cert.webViewLink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline text-xs inline-flex items-center gap-1"
+                          className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-600 hover:text-white dark:hover:bg-indigo-600 dark:hover:text-white font-bold text-xs inline-flex items-center gap-1.5 transition-all shadow-2xs border border-indigo-200/60 dark:border-indigo-800/60"
+                          title="Buka Dokumen di Google Drive"
                         >
                           <span>Lihat Drive</span>
                           <ExternalLink className="w-3 h-3" />
@@ -670,7 +687,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                           type="button"
                           onClick={() => onSelectCertificate(cert)}
                           className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                          title="Lihat Detail"
+                          title="Lihat Detail & QR Code"
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
@@ -679,7 +696,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                           type="button"
                           onClick={() => onDeleteCertificate(cert)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer"
-                          title="Hapus"
+                          title="Hapus Sertifikat"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

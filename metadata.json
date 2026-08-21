@@ -1,6 +1,6 @@
 {
-  "name": "Sistem Manajemen Sertifikat",
-    "description": "Aplikasi manajemen sertifikat digital dengan penyimpanan otomatis dokumen/gambar ke Google Drive, pemantauan masa berlaku otomatis (peringatan < 30 hari), dan sinkronisasi data.",
+  "name": "Sertifikat Diklat RSUD dr.H.Jusuf.SK",
+  "description": "Sistem Manajemen Sertifikat Diklat RSUD dr.H.Jusuf.SK dengan integrasi Google Drive, pemantauan masa berlaku otomatis, dan ekstraksi data dokumen.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
