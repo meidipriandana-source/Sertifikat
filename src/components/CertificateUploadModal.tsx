@@ -2,10 +2,17 @@ import React, { useState, useRef } from 'react';
 import { 
   X, UploadCloud, FileText, Image as ImageIcon, CheckCircle, 
   AlertCircle, Cloud, Sparkles, Calendar, User, Tag, Building2, Hash, Clock,
-  Files, CheckSquare, Layers, Plus, Trash2
+  Files, CheckSquare, Layers, Plus, Trash2, Wand2, Loader2, Scan
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { uploadCertificate, uploadMultipleCertificates, parseCertificateItemInfo } from '../services/api';
+import { 
+  uploadCertificate, 
+  uploadMultipleCertificates, 
+  parseCertificateItemInfo,
+  scanCertificateFile,
+  scanBatchCertificateFiles,
+  ScannedCertificateResult
+} from '../services/api';
 import { GoogleAuthState } from '../services/googleAuth';
 import { Certificate, CertificateCategory } from '../types';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
@@ -24,6 +31,11 @@ interface BatchFileItem {
   title: string;
   recipientName: string;
   category: CertificateCategory;
+  issuer?: string;
+  issueDate?: string;
+  expiryDate?: string;
+  isScanning?: boolean;
+  scannedSource?: 'ai_vision' | 'filename_heuristic';
 }
 
 export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
@@ -49,6 +61,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const [description, setDescription] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
+  const [isScanningSingle, setIsScanningSingle] = useState(false);
+  const [singleScanSuccess, setSingleScanSuccess] = useState<boolean | null>(null);
   
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -59,6 +73,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const [batchIssuer, setBatchIssuer] = useState('Penyelenggara Diklat Resmi');
   const [batchValidityYears, setBatchValidityYears] = useState<number>(3);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+  const [isScanningBatch, setIsScanningBatch] = useState(false);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -93,8 +109,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     setTags(tags.filter(t => t !== tagToRemove));
   };
 
-  const handleSingleFileChange = (selectedFile: File) => {
+  const handleSingleFileChange = async (selectedFile: File) => {
     setErrorMsg(null);
+    setSingleScanSuccess(null);
     const validMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!validMimes.includes(selectedFile.type)) {
       setErrorMsg('Format file tidak didukung. Harap pilih file PDF, JPG, atau PNG.');
@@ -118,11 +135,67 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
       setPreviewUrl(null);
     }
 
-    // Auto parse title and recipient
+    // Heuristic pre-fill
     const parsed = parseCertificateItemInfo(selectedFile.name, 'Sertifikat Pelatihan', 'Staff RSUD');
     if (!title) setTitle(parsed.title);
     if (!recipientName && parsed.recipientName !== 'Staff RSUD') setRecipientName(parsed.recipientName);
     setCategory(parsed.category);
+
+    // Run AI OCR scan
+    try {
+      setIsScanningSingle(true);
+      const scanResult = await scanCertificateFile(selectedFile);
+      if (scanResult) {
+        if (scanResult.recipientName) setRecipientName(scanResult.recipientName);
+        if (scanResult.title) setTitle(scanResult.title);
+        if (scanResult.issuer) setIssuer(scanResult.issuer);
+        if (scanResult.category) setCategory(scanResult.category);
+        if (scanResult.issueDate) setIssueDate(scanResult.issueDate);
+        if (scanResult.expiryDate) {
+          setExpiryDate(scanResult.expiryDate);
+          setHasExpiryDate(true);
+        }
+        if (scanResult.credentialId && !credentialId) setCredentialId(scanResult.credentialId);
+        setSingleScanSuccess(true);
+      }
+    } catch (scanErr) {
+      console.warn('AI OCR scan error on single file:', scanErr);
+    } finally {
+      setIsScanningSingle(false);
+    }
+  };
+
+  const scanBatchItems = async (itemsToScan: BatchFileItem[], fullList: BatchFileItem[]) => {
+    setIsScanningBatch(true);
+    try {
+      const files = itemsToScan.map(i => i.file);
+      const results = await scanBatchCertificateFiles(files);
+      
+      setBatchFiles((prev) => {
+        const next = [...prev];
+        results.forEach((res) => {
+          const idx = next.findIndex(n => n.file.name === res.fileName);
+          if (idx !== -1) {
+            next[idx] = {
+              ...next[idx],
+              recipientName: res.recipientName || next[idx].recipientName,
+              title: res.title || next[idx].title,
+              category: res.category || next[idx].category,
+              issuer: res.issuer || next[idx].issuer,
+              issueDate: res.issueDate || next[idx].issueDate,
+              expiryDate: res.expiryDate || next[idx].expiryDate,
+              isScanning: false,
+              scannedSource: res.source
+            };
+          }
+        });
+        return next;
+      });
+    } catch (batchScanErr) {
+      console.warn('Error during batch AI scan:', batchScanErr);
+    } finally {
+      setIsScanningBatch(false);
+    }
   };
 
   const handleBatchFilesAdd = (newFileList: FileList | File[]) => {
@@ -137,7 +210,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
           file: f,
           title: parsed.title,
           recipientName: parsed.recipientName,
-          category: parsed.category
+          category: parsed.category,
+          isScanning: autoScanEnabled,
+          scannedSource: 'filename_heuristic'
         });
       }
     });
@@ -147,7 +222,17 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
       return;
     }
 
-    setBatchFiles((prev) => [...prev, ...addedItems]);
+    const updatedList = [...batchFiles, ...addedItems];
+    setBatchFiles(updatedList);
+
+    if (autoScanEnabled) {
+      scanBatchItems(addedItems, updatedList);
+    }
+  };
+
+  const handleTriggerManualBatchScan = () => {
+    if (batchFiles.length === 0) return;
+    scanBatchItems(batchFiles, batchFiles);
   };
 
   const handleRemoveBatchItem = (index: number) => {
@@ -403,9 +488,18 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
             <form onSubmit={handleSingleSubmit} className="space-y-4">
               {/* File Dropzone */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
-                  File Dokumen / Gambar <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    File Dokumen / Gambar <span className="text-rose-500">*</span>
+                  </label>
+                  {isScanningSingle && (
+                    <span className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 animate-pulse">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Membaca nama & isi dokumen...
+                    </span>
+                  )}
+                </div>
+
                 <div
                   id="upload-dropzone"
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -461,10 +555,17 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
                         Klik untuk memilih berkas atau tarik & lepas ke sini
                       </p>
-                      <p className="text-[11px] text-slate-400">PDF, PNG, JPG (Maks. 30MB)</p>
+                      <p className="text-[11px] text-slate-400">PDF, PNG, JPG (Maks. 30MB) - Otomatis mendeteksi nama penerima</p>
                     </div>
                   )}
                 </div>
+
+                {singleScanSuccess && (
+                  <div className="mt-2 p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 text-[11px]">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Nama penerima dan detail sertifikat berhasil diekstrak otomatis. Anda dapat mengubahnya jika perlu.</span>
+                  </div>
+                )}
               </div>
 
               {/* Title & Recipient */}
@@ -628,9 +729,22 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               
               {/* Batch Dropzone */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
-                  Pilih Banyak File PDF/Gambar Sekaligus <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Pilih Banyak File PDF/Gambar Sekaligus <span className="text-rose-500">*</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoScanEnabled}
+                      onChange={(e) => setAutoScanEnabled(e.target.checked)}
+                      className="rounded text-indigo-600"
+                    />
+                    <Sparkles className="w-3 h-3" />
+                    <span>Otomatis Baca Nama (AI OCR)</span>
+                  </label>
+                </div>
+
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
@@ -664,10 +778,10 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                   <div className="space-y-1.5">
                     <Files className="w-9 h-9 mx-auto text-indigo-600 dark:text-indigo-400" />
                     <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Tarik & lepas banyak berkas PDF atau klik untuk pilih sekaligus
+                      Tarik & lepas banyak berkas PDF/Foto atau klik untuk pilih sekaligus
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      Sistem membaca nama berkas dan memisahkan setiap peserta menjadi sertifikat individu
+                      Sistem membaca nama penerima dan memisahkan setiap sertifikat secara individu ke sistem
                     </p>
                   </div>
                 </div>
@@ -676,20 +790,39 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               {/* Batch Table / List */}
               {batchFiles.length > 0 && (
                 <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">
-                      {batchFiles.length} Berkas Terdeteksi (Disendirikan 1 per 1):
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setBatchFiles([])}
-                      className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline cursor-pointer"
-                    >
-                      Hapus Semua
-                    </button>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                        {batchFiles.length} Berkas Siap Diunggah (Disendirikan):
+                      </span>
+                      {isScanningBatch && (
+                        <span className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-indigo-100 dark:bg-indigo-950/80 px-2 py-0.5 rounded-full animate-pulse">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Memindai nama peserta...
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleTriggerManualBatchScan}
+                        disabled={isScanningBatch}
+                        className="px-2.5 py-1 text-[11px] rounded-lg bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 font-bold hover:bg-indigo-200 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        <span>Pindai Ulang AI</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBatchFiles([])}
+                        className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline cursor-pointer"
+                      >
+                        Hapus Semua
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                     {batchFiles.map((item, idx) => (
                       <div 
                         key={idx} 
@@ -700,9 +833,24 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                             <span className="w-5 h-5 rounded-full bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold flex items-center justify-center shrink-0">
                               {idx + 1}
                             </span>
-                            <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                            <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-xs">
                               📁 {item.file.name}
                             </span>
+                            {item.isScanning ? (
+                              <span className="text-[10px] text-indigo-600 font-bold flex items-center gap-1 animate-pulse">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                Membaca...
+                              </span>
+                            ) : item.scannedSource === 'ai_vision' ? (
+                              <span className="text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Terbaca AI
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
+                                Nama Berkas
+                              </span>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -714,20 +862,26 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <input
-                            type="text"
-                            value={item.recipientName}
-                            onChange={(e) => handleBatchItemChange(idx, 'recipientName', e.target.value)}
-                            placeholder="Nama Penerima / Pemilik"
-                            className="px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
-                          />
-                          <input
-                            type="text"
-                            value={item.title}
-                            onChange={(e) => handleBatchItemChange(idx, 'title', e.target.value)}
-                            placeholder="Judul Pelatihan / Sertifikat"
-                            className="px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
-                          />
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Nama Peserta / Penerima:</label>
+                            <input
+                              type="text"
+                              value={item.recipientName}
+                              onChange={(e) => handleBatchItemChange(idx, 'recipientName', e.target.value)}
+                              placeholder="Nama Penerima / Pemilik"
+                              className="w-full px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Judul Sertifikat:</label>
+                            <input
+                              type="text"
+                              value={item.title}
+                              onChange={(e) => handleBatchItemChange(idx, 'title', e.target.value)}
+                              placeholder="Judul Pelatihan / Sertifikat"
+                              className="w-full px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                            />
+                          </div>
                         </div>
                       </div>
                     ))}

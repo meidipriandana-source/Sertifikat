@@ -495,6 +495,86 @@ export async function resetSampleCertificates(): Promise<{ success: boolean; mes
  * Synchronize Google Drive Folder
  * Works seamlessly both with Node.js backend AND with direct client-side fallback on static Vercel hosts!
  */
+export interface ScannedCertificateResult {
+  fileName: string;
+  recipientName: string;
+  title: string;
+  issuer: string;
+  issueDate: string;
+  expiryDate?: string;
+  category: CertificateCategory;
+  credentialId?: string;
+  source: 'ai_vision' | 'filename_heuristic';
+}
+
+/**
+ * Scan a single certificate file using backend AI OCR or local heuristics
+ */
+export async function scanCertificateFile(file: File): Promise<ScannedCertificateResult> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API_BASE}/certificates/scan-file`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.data) {
+      return data.data;
+    }
+  } catch (err) {
+    console.warn('Failed to call scan-file API, using heuristic fallback:', err);
+  }
+
+  const parsed = parseCertificateItemInfo(file.name, 'Sertifikat Pelatihan', 'Peserta Sertifikat');
+  return {
+    fileName: file.name,
+    recipientName: parsed.recipientName,
+    title: parsed.title,
+    issuer: 'Penyelenggara Diklat Resmi',
+    issueDate: new Date().toISOString().split('T')[0],
+    category: parsed.category,
+    source: 'filename_heuristic'
+  };
+}
+
+/**
+ * Scan multiple certificate files in batch using AI OCR
+ */
+export async function scanBatchCertificateFiles(
+  files: File[],
+  onProgress?: (completed: number, total: number) => void
+): Promise<ScannedCertificateResult[]> {
+  try {
+    const formData = new FormData();
+    files.forEach((f) => formData.append('files', f));
+
+    const res = await fetch(`${API_BASE}/certificates/scan-batch`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && Array.isArray(data?.data)) {
+      if (onProgress) onProgress(files.length, files.length);
+      return data.data;
+    }
+  } catch (err) {
+    console.warn('Batch scan API failed, falling back to individual scans:', err);
+  }
+
+  // Fallback sequential scan
+  const results: ScannedCertificateResult[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const scanned = await scanCertificateFile(files[i]);
+    results.push(scanned);
+    if (onProgress) onProgress(i + 1, files.length);
+  }
+  return results;
+}
+
 // Helper to intelligently split item/file string into title, recipient name, and category
 export function parseCertificateItemInfo(
   rawName: string, 
@@ -507,36 +587,58 @@ export function parseCertificateItemInfo(
   let title = fallbackTitle;
   let recipient = fallbackRecipient;
 
-  // Pattern 1: Title - Recipient Name (e.g. "Sertifikat SIMRS - Ns. Siti Rahma, S.Kep" or "Pelatihan ICU | dr. Ahmad Fauzi")
-  if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ')) {
-    const parts = clean.split(/\s*[-–|]\s*/);
+  // Patterns for titles / degrees: dr., drg., Ns., Prof., Apt., Sp.A, Sp.PD, Sp.An, S.Kep, M.Kes, etc.
+  const personTitleRegex = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|s\.pd|s\.si|s\.e|ners)/i;
+
+  // Pattern 1: Delimiters like " - ", " – ", " | ", or "_"
+  if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ') || clean.includes('_')) {
+    const delimiter = clean.includes(' - ') ? ' - ' : clean.includes(' – ') ? ' – ' : clean.includes(' | ') ? ' | ' : '_';
+    const parts = clean.split(delimiter).map(p => p.trim()).filter(Boolean);
+
     if (parts.length >= 2) {
-      // Check which part is more likely a person's name (contains dr., Ns., Sp., S.Kep, A.Md, or 2-4 words)
-      const isPersonFirst = /(dr\.|ns\.|prof\.|apt\.|sp\.|s\.kep|a\.md|ners)/i.test(parts[0]);
-      if (isPersonFirst) {
-        recipient = parts[0].trim();
-        title = parts.slice(1).join(' - ').trim();
+      const isPart0Person = personTitleRegex.test(parts[0]);
+      const isPart1Person = personTitleRegex.test(parts[1]);
+
+      if (isPart0Person && !isPart1Person) {
+        recipient = parts[0];
+        title = parts.slice(1).join(' - ');
+      } else if (isPart1Person && !isPart0Person) {
+        title = parts[0];
+        recipient = parts.slice(1).join(' - ');
       } else {
-        title = parts[0].trim();
-        recipient = parts.slice(1).join(' - ').trim();
+        const isPart0Title = /(sertifikat|pelatihan|workshop|seminar|diklat|kursus|bimtek|lomba|juara)/i.test(parts[0]);
+        if (isPart0Title) {
+          title = parts[0];
+          recipient = parts.slice(1).join(' - ');
+        } else {
+          recipient = parts[0];
+          title = parts.slice(1).join(' - ');
+        }
       }
     }
   } else if (clean.toLowerCase().startsWith('sertifikat ') || clean.toLowerCase().startsWith('pelatihan ') || clean.toLowerCase().startsWith('workshop ')) {
-    // e.g. "Sertifikat BTCLS Ns. Ahmad"
     title = clean;
+    const nameMatch = clean.match(/(?:untuk|kepada|atas nama|an\.)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})/);
+    if (nameMatch) {
+      recipient = nameMatch[1];
+    }
   } else {
-    // If it's a person's name (e.g. "dr. Bambang Suherman, Sp.PD")
+    // If it looks like a person's name
     recipient = clean;
   }
+
+  // Clean formatting
+  recipient = recipient.replace(/_/g, ' ').trim();
+  title = title.replace(/_/g, ' ').trim();
 
   // Determine category
   const lower = (title + ' ' + rawName).toLowerCase();
   let category: CertificateCategory = 'Pelatihan';
   if (lower.includes('prestasi') || lower.includes('juara') || lower.includes('lomba') || lower.includes('winner')) category = 'Prestasi';
-  else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('webinar') || lower.includes('simrs') || lower.includes('rme')) category = 'Workshop';
+  else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('webinar') || lower.includes('simrs') || lower.includes('rme') || lower.includes('sim ')) category = 'Workshop';
   else if (lower.includes('lulus') || lower.includes('kelulusan') || lower.includes('yudisium')) category = 'Kelulusan';
-  else if (lower.includes('akademik') || lower.includes('ijazah') || lower.includes('sarjana') || lower.includes('diploma')) category = 'Akademik';
-  else if (lower.includes('penghargaan') || lower.includes('award') || lower.includes('apresiasi')) category = 'Penghargaan';
+  else if (lower.includes('akademik') || lower.includes('ijazah') || lower.includes('sarjana') || lower.includes('diploma') || lower.includes('magister')) category = 'Akademik';
+  else if (lower.includes('penghargaan') || lower.includes('award') || lower.includes('apresiasi') || lower.includes('teladan')) category = 'Penghargaan';
 
   return {
     title: title || fallbackTitle,

@@ -3,9 +3,26 @@ import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const app = express();
 const PORT = 3000;
+
+// Setup Gemini AI client lazily
+let genAIClient: GoogleGenAI | null = null;
+function getGenAI(): GoogleGenAI | null {
+  if (!genAIClient && process.env.GEMINI_API_KEY) {
+    genAIClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+  }
+  return genAIClient;
+}
 
 // Setup JSON & URL encoded parsers
 app.use(express.json({ limit: '50mb' }));
@@ -339,6 +356,189 @@ async function uploadFileToGoogleDrive(
 }
 
 // ----------------------------------------------------
+// OCR & AI DOCUMENT ANALYSIS HELPERS
+// ----------------------------------------------------
+interface ScannedCertResult {
+  fileName: string;
+  recipientName: string;
+  title: string;
+  issuer: string;
+  issueDate: string;
+  expiryDate?: string;
+  category: 'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya';
+  credentialId?: string;
+  source: 'ai_vision' | 'filename_heuristic';
+}
+
+function parseCertificateHeuristic(fileName: string): Omit<ScannedCertResult, 'source'> {
+  let clean = fileName.replace(/\.[^/.]+$/, '').trim();
+  clean = clean.replace(/^[0-9]+[\.\-\_\s]+/, ''); // remove leading numbering like 01. 
+
+  let title = 'Sertifikat Pelatihan';
+  let recipient = 'Peserta Sertifikat';
+  let category: ScannedCertResult['category'] = 'Pelatihan';
+  let issuer = 'Penyelenggara Resmi';
+  let issueDate = new Date().toISOString().split('T')[0];
+  let expiryDate: string | undefined = undefined;
+
+  // Detect year in name
+  const yearMatch = clean.match(/\b(202[0-9])\b/);
+  if (yearMatch) {
+    issueDate = `${yearMatch[1]}-08-15`;
+    const expYear = parseInt(yearMatch[1], 10) + 3;
+    expiryDate = `${expYear}-08-15`;
+  }
+
+  // Check delimiter separation (e.g., "dr. Budi Santoso - Pelatihan BTCLS" or "Pelatihan ICU _ Ns. Siti Rahma")
+  if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ') || clean.includes('_')) {
+    const delimiter = clean.includes(' - ') ? ' - ' : clean.includes(' – ') ? ' – ' : clean.includes(' | ') ? ' | ' : '_';
+    const parts = clean.split(delimiter).map(p => p.trim()).filter(Boolean);
+
+    if (parts.length >= 2) {
+      // Check which side has person titles (dr., drg., Ns., Sp., S.Kep, M.Kes, etc.)
+      const isPart0Person = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|ners)/i.test(parts[0]);
+      const isPart1Person = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|ners)/i.test(parts[1]);
+
+      if (isPart0Person && !isPart1Person) {
+        recipient = parts[0];
+        title = parts.slice(1).join(' - ');
+      } else if (isPart1Person && !isPart0Person) {
+        title = parts[0];
+        recipient = parts.slice(1).join(' - ');
+      } else {
+        // Look for keywords like "Sertifikat", "Pelatihan", "Workshop"
+        const isPart0Title = /(sertifikat|pelatihan|workshop|seminar|diklat|kursus|bimtek|lomba|juara)/i.test(parts[0]);
+        if (isPart0Title) {
+          title = parts[0];
+          recipient = parts.slice(1).join(' - ');
+        } else {
+          recipient = parts[0];
+          title = parts.slice(1).join(' - ');
+        }
+      }
+    }
+  } else if (clean.toLowerCase().startsWith('sertifikat ') || clean.toLowerCase().startsWith('pelatihan ') || clean.toLowerCase().startsWith('workshop ')) {
+    title = clean;
+    const nameMatch = clean.match(/(?:untuk|kepada|atas nama|an\.)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})/);
+    if (nameMatch) {
+      recipient = nameMatch[1];
+    }
+  } else {
+    // If it looks like a person's name
+    recipient = clean;
+  }
+
+  // Determine category
+  const lower = (title + ' ' + fileName).toLowerCase();
+  if (lower.includes('prestasi') || lower.includes('juara') || lower.includes('lomba') || lower.includes('winner')) category = 'Prestasi';
+  else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('webinar') || lower.includes('simrs') || lower.includes('rme')) category = 'Workshop';
+  else if (lower.includes('lulus') || lower.includes('kelulusan') || lower.includes('yudisium')) category = 'Kelulusan';
+  else if (lower.includes('akademik') || lower.includes('ijazah') || lower.includes('sarjana') || lower.includes('diploma')) category = 'Akademik';
+  else if (lower.includes('penghargaan') || lower.includes('award') || lower.includes('apresiasi')) category = 'Penghargaan';
+
+  if (lower.includes('kemenkes')) issuer = 'Kementerian Kesehatan RI';
+  else if (lower.includes('hipkabi')) issuer = 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)';
+  else if (lower.includes('idi')) issuer = 'Ikatan Dokter Indonesia (IDI)';
+  else if (lower.includes('ppni')) issuer = 'Persatuan Perawat Nasional Indonesia (PPNI)';
+
+  return {
+    fileName,
+    recipientName: recipient.replace(/_/g, ' ').trim(),
+    title: title.replace(/_/g, ' ').trim(),
+    issuer,
+    issueDate,
+    expiryDate,
+    category,
+    credentialId: `CERT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`
+  };
+}
+
+async function analyzeCertificateBuffer(
+  buffer: Buffer,
+  mimeType: string,
+  fileName: string
+): Promise<ScannedCertResult> {
+  const fallback = parseCertificateHeuristic(fileName);
+  const ai = getGenAI();
+
+  if (!ai) {
+    return {
+      ...fallback,
+      source: 'filename_heuristic'
+    };
+  }
+
+  try {
+    const validGenAiMimes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    const targetMime = validGenAiMimes.includes(mimeType) ? mimeType : (fileName.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+
+    const prompt = `Anda adalah sistem OCR dan AI pembaca sertifikat profesional.
+Baca dan analisis dokumen/gambar sertifikat ini (nama file: "${fileName}") dan ekstrak data berikut secara presisi dalam Bahasa Indonesia:
+1. recipientName: Nama lengkap orang/peserta penerima sertifikat. Wajib menyertakan gelar dokter/perawat/akademik jika tertulis (contoh: dr. Muhammad Rizky, Sp.A atau Ns. Siti Aminah, S.Kep).
+2. title: Nama atau judul kegiatan, pelatihan, workshop, keahlian, atau jenis sertifikat (contoh: Pelatihan BTCLS & Keperawatan Gawat Darurat).
+3. issuer: Nama instansi atau organisasi yang menerbitkan sertifikat (contoh: Kementerian Kesehatan RI, PPNI, IDI, RSUD, dll).
+4. issueDate: Tanggal diterbitkan dalam format YYYY-MM-DD (jika tidak tertera jelas, gunakan tanggal hari ini atau tahun tertera).
+5. expiryDate: Tanggal kadaluarsa atau masa berlaku dalam format YYYY-MM-DD jika tertulis, atau kosongkan "" jika seumur hidup / tidak ada.
+6. credentialId: Nomor sertifikat/nomor registrasi/SKP jika ada.
+7. category: Pilih salah satu nilai tepat: ["Pelatihan", "Workshop", "Prestasi", "Penghargaan", "Akademik", "Kelulusan", "Lainnya"].`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              data: buffer.toString('base64'),
+              mimeType: targetMime
+            }
+          },
+          { text: prompt }
+        ]
+      },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            recipientName: { type: Type.STRING, description: 'Nama lengkap pemilik/peserta sertifikat beserta gelar' },
+            title: { type: Type.STRING, description: 'Judul sertifikat atau pelatihan' },
+            issuer: { type: Type.STRING, description: 'Organisasi atau lembaga penerbit sertifikat' },
+            issueDate: { type: Type.STRING, description: 'Tanggal terbit format YYYY-MM-DD' },
+            expiryDate: { type: Type.STRING, description: 'Tanggal kadaluarsa format YYYY-MM-DD atau kosong' },
+            credentialId: { type: Type.STRING, description: 'Nomor register atau nomor sertifikat' },
+            category: { type: Type.STRING, description: 'Kategori sertifikat' }
+          },
+          required: ['recipientName', 'title']
+        }
+      }
+    });
+
+    const parsedJson = JSON.parse(response.text || '{}');
+
+    const validCategories = ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
+    const chosenCategory = validCategories.includes(parsedJson.category) ? parsedJson.category : fallback.category;
+
+    return {
+      fileName,
+      recipientName: (parsedJson.recipientName && parsedJson.recipientName.trim()) || fallback.recipientName,
+      title: (parsedJson.title && parsedJson.title.trim()) || fallback.title,
+      issuer: (parsedJson.issuer && parsedJson.issuer.trim()) || fallback.issuer,
+      issueDate: (parsedJson.issueDate && /^\d{4}-\d{2}-\d{2}$/.test(parsedJson.issueDate)) ? parsedJson.issueDate : fallback.issueDate,
+      expiryDate: (parsedJson.expiryDate && /^\d{4}-\d{2}-\d{2}$/.test(parsedJson.expiryDate)) ? parsedJson.expiryDate : fallback.expiryDate,
+      credentialId: (parsedJson.credentialId && parsedJson.credentialId.trim()) || fallback.credentialId,
+      category: chosenCategory as any,
+      source: 'ai_vision'
+    };
+  } catch (aiErr) {
+    console.warn(`AI Vision scan failed for ${fileName}, using heuristic fallback:`, aiErr);
+    return {
+      ...fallback,
+      source: 'filename_heuristic'
+    };
+  }
+}
+
+// ----------------------------------------------------
 // API ROUTES
 // ----------------------------------------------------
 
@@ -350,8 +550,54 @@ app.get('/api/config', (_req: Request, res: Response) => {
     supportedFormats: ['PDF', 'JPG', 'PNG', 'WEBP'],
     maxFileSizeMB: 30,
     hasOAuth: true,
+    hasAiScan: !!process.env.GEMINI_API_KEY,
     serverTime: new Date().toISOString()
   });
+});
+
+// Scan single file endpoint for instant OCR/AI reading
+app.post('/api/certificates/scan-file', upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'File dokumen/gambar diperlukan untuk pemindaian.' });
+    }
+
+    const result = await analyzeCertificateBuffer(file.buffer, file.mimetype, file.originalname);
+    res.json({
+      success: true,
+      message: 'Pemindaian dokumen sertifikat selesai.',
+      data: result
+    });
+  } catch (err: any) {
+    console.error('Error scanning certificate file:', err);
+    res.status(500).json({ success: false, message: err.message || 'Gagal memindai dokumen sertifikat.' });
+  }
+});
+
+// Scan multiple files in batch
+app.post('/api/certificates/scan-batch', upload.array('files', 30), async (req: Request, res: Response) => {
+  try {
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length === 0) {
+      return res.status(400).json({ success: false, message: 'Tidak ada file yang diunggah untuk dipindai.' });
+    }
+
+    const results: ScannedCertResult[] = [];
+    for (const f of files) {
+      const scanned = await analyzeCertificateBuffer(f.buffer, f.mimetype, f.originalname);
+      results.push(scanned);
+    }
+
+    res.json({
+      success: true,
+      totalScanned: results.length,
+      data: results
+    });
+  } catch (err: any) {
+    console.error('Error in batch scan:', err);
+    res.status(500).json({ success: false, message: err.message || 'Gagal memindai kumpulan dokumen sertifikat.' });
+  }
 });
 
 // 2. Get list of certificates with search, filter, and sorting
