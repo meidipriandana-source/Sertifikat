@@ -121,7 +121,12 @@ export default function App() {
   }, [loadData]);
 
   const handleUploadSuccess = (newCert: Certificate) => {
-    showToast(`Sertifikat "${newCert.title}" berhasil diunggah ke Google Drive!`, 'success');
+    showToast(`Sertifikat "${newCert.title}" berhasil disimpan!`, 'success');
+    loadData();
+  };
+
+  const handleBatchUploadSuccess = (newCerts: Certificate[]) => {
+    showToast(`✓ Berhasil mengunggah ${newCerts.length} berkas sertifikat secara mandiri!`, 'success');
     loadData();
   };
 
@@ -330,6 +335,7 @@ export default function App() {
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         onSuccess={handleUploadSuccess}
+        onBatchSuccess={handleBatchUploadSuccess}
         authState={authState}
         onOpenGoogleConnect={() => setIsGoogleConnectOpen(true)}
       />

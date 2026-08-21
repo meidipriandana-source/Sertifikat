@@ -1,4 +1,4 @@
-import { Certificate, CertificateStats } from '../types';
+import { Certificate, CertificateStats, CertificateCategory } from '../types';
 import { getStoredAuthState } from './googleAuth';
 
 const API_BASE = '/api';
@@ -495,6 +495,130 @@ export async function resetSampleCertificates(): Promise<{ success: boolean; mes
  * Synchronize Google Drive Folder
  * Works seamlessly both with Node.js backend AND with direct client-side fallback on static Vercel hosts!
  */
+// Helper to intelligently split item/file string into title, recipient name, and category
+export function parseCertificateItemInfo(
+  rawName: string, 
+  fallbackTitle: string = 'Sertifikat Pelatihan', 
+  fallbackRecipient: string = 'Staff RSUD'
+): { title: string; recipientName: string; category: CertificateCategory } {
+  let clean = rawName.replace(/\.[^/.]+$/, '').trim(); // remove .pdf, .jpg, etc.
+  clean = clean.replace(/^[0-9]+[\.\-\_\s]+/, ''); // remove leading numbering like "01. " or "1 - "
+
+  let title = fallbackTitle;
+  let recipient = fallbackRecipient;
+
+  // Pattern 1: Title - Recipient Name (e.g. "Sertifikat SIMRS - Ns. Siti Rahma, S.Kep" or "Pelatihan ICU | dr. Ahmad Fauzi")
+  if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ')) {
+    const parts = clean.split(/\s*[-–|]\s*/);
+    if (parts.length >= 2) {
+      // Check which part is more likely a person's name (contains dr., Ns., Sp., S.Kep, A.Md, or 2-4 words)
+      const isPersonFirst = /(dr\.|ns\.|prof\.|apt\.|sp\.|s\.kep|a\.md|ners)/i.test(parts[0]);
+      if (isPersonFirst) {
+        recipient = parts[0].trim();
+        title = parts.slice(1).join(' - ').trim();
+      } else {
+        title = parts[0].trim();
+        recipient = parts.slice(1).join(' - ').trim();
+      }
+    }
+  } else if (clean.toLowerCase().startsWith('sertifikat ') || clean.toLowerCase().startsWith('pelatihan ') || clean.toLowerCase().startsWith('workshop ')) {
+    // e.g. "Sertifikat BTCLS Ns. Ahmad"
+    title = clean;
+  } else {
+    // If it's a person's name (e.g. "dr. Bambang Suherman, Sp.PD")
+    recipient = clean;
+  }
+
+  // Determine category
+  const lower = (title + ' ' + rawName).toLowerCase();
+  let category: CertificateCategory = 'Pelatihan';
+  if (lower.includes('prestasi') || lower.includes('juara') || lower.includes('lomba') || lower.includes('winner')) category = 'Prestasi';
+  else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('webinar') || lower.includes('simrs') || lower.includes('rme')) category = 'Workshop';
+  else if (lower.includes('lulus') || lower.includes('kelulusan') || lower.includes('yudisium')) category = 'Kelulusan';
+  else if (lower.includes('akademik') || lower.includes('ijazah') || lower.includes('sarjana') || lower.includes('diploma')) category = 'Akademik';
+  else if (lower.includes('penghargaan') || lower.includes('award') || lower.includes('apresiasi')) category = 'Penghargaan';
+
+  return {
+    title: title || fallbackTitle,
+    recipientName: recipient || fallbackRecipient,
+    category
+  };
+}
+
+export async function uploadMultipleCertificates(
+  files: File[],
+  baseConfig: {
+    issuer?: string;
+    issueDate?: string;
+    validityYears?: number;
+    defaultCategory?: CertificateCategory;
+  },
+  onProgress?: (completed: number, total: number) => void
+): Promise<Certificate[]> {
+  const uploadedCertificates: Certificate[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const parsed = parseCertificateItemInfo(file.name, 'Sertifikat Pelatihan', 'Staff RSUD');
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', parsed.title);
+    formData.append('recipientName', parsed.recipientName);
+    formData.append('issueDate', baseConfig.issueDate || new Date().toISOString().split('T')[0]);
+    
+    const valYears = baseConfig.validityYears ?? 3;
+    if (valYears > 0) {
+      const baseYear = parseInt((baseConfig.issueDate || new Date().toISOString().split('T')[0]).substring(0, 4), 10);
+      const expDate = `${baseYear + valYears}-${(baseConfig.issueDate || new Date().toISOString().split('T')[0]).substring(5)}`;
+      formData.append('expiryDate', expDate);
+    } else {
+      formData.append('expiryDate', '');
+    }
+
+    formData.append('issuer', baseConfig.issuer || 'Penyelenggara Diklat / Kemenkes');
+    formData.append('category', baseConfig.defaultCategory || parsed.category);
+    formData.append('tags', JSON.stringify(['Batch Upload', 'Multi-File', parsed.category]));
+
+    try {
+      const cert = await uploadCertificate(formData);
+      uploadedCertificates.push(cert);
+    } catch (err) {
+      console.warn(`Failed to upload single certificate ${file.name}, using local fallback:`, err);
+      // Create local separate certificate
+      const localId = `cert-batch-${Date.now()}-${i}`;
+      const nowIso = new Date().toISOString();
+      const newLocalCert: Certificate = {
+        id: localId,
+        title: parsed.title,
+        recipientName: parsed.recipientName,
+        recipientEmail: 'staff@rsud.go.id',
+        issueDate: baseConfig.issueDate || new Date().toISOString().split('T')[0],
+        expiryDate: valYears > 0 ? `${parseInt((baseConfig.issueDate || new Date().toISOString().split('T')[0]).substring(0, 4), 10) + valYears}-${(baseConfig.issueDate || new Date().toISOString().split('T')[0]).substring(5)}` : undefined,
+        issuer: baseConfig.issuer || 'Penyelenggara Diklat Resmi',
+        category: baseConfig.defaultCategory || parsed.category,
+        credentialId: `CERT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`,
+        tags: ['Batch Upload', 'Individual File'],
+        driveFileId: `local-file-${Date.now()}-${i}`,
+        webViewLink: '#',
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || 'application/pdf',
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      saveLocalCertificates([...getLocalCertificates(), newLocalCert]);
+      uploadedCertificates.push(newLocalCert);
+    }
+
+    if (onProgress) {
+      onProgress(i + 1, files.length);
+    }
+  }
+
+  return uploadedCertificates;
+}
+
 export async function syncGoogleDriveFolder(
   folderUrlOrId: string,
   options?: {
@@ -576,22 +700,17 @@ export async function syncGoogleDriveFolder(
   const currentRecords = getLocalCertificates();
   const newlyCreated: Certificate[] = [];
 
-  const itemsToGenerate: Array<{ name: string; category?: any; issue?: string; expYears?: number; issuer?: string }> = [];
+  const itemsToGenerate: Array<{ name: string; recipient?: string; category?: any; issue?: string; expYears?: number; issuer?: string }> = [];
 
   if (subfolderList.length > 0) {
     subfolderList.forEach((itemText) => {
+      const parsed = parseCertificateItemInfo(itemText, itemText.trim(), defaultRecipient);
       const lower = itemText.toLowerCase();
-      let cat = preferredCategory || 'Pelatihan';
-      if (lower.includes('prestasi') || lower.includes('juara') || lower.includes('lomba') || lower.includes('winner')) cat = 'Prestasi';
-      else if (lower.includes('workshop') || lower.includes('seminar') || lower.includes('webinar') || lower.includes('simrs') || lower.includes('sim ')) cat = 'Workshop';
-      else if (lower.includes('lulus') || lower.includes('kelulusan') || lower.includes('yudisium')) cat = 'Kelulusan';
-      else if (lower.includes('akademik') || lower.includes('ijazah') || lower.includes('sarjana') || lower.includes('diploma')) cat = 'Akademik';
-      else if (lower.includes('penghargaan') || lower.includes('award') || lower.includes('apresiasi')) cat = 'Penghargaan';
-      else if (lower.includes('pelatihan') || lower.includes('training') || lower.includes('outhouse') || lower.includes('inhouse') || lower.includes('btcls') || lower.includes('bhd') || lower.includes('bedah') || lower.includes('icu') || lower.includes('kemenkes') || lower.includes('hipkabi')) cat = 'Pelatihan';
 
       itemsToGenerate.push({
-        name: itemText.trim(),
-        category: cat,
+        name: parsed.title,
+        recipient: parsed.recipientName !== defaultRecipient ? parsed.recipientName : defaultRecipient,
+        category: preferredCategory || parsed.category,
         issue: new Date().toISOString().split('T')[0],
         expYears: validityYears,
         issuer: lower.includes('kemenkes') ? 'Kementerian Kesehatan RI' : defaultIssuer
@@ -602,26 +721,26 @@ export async function syncGoogleDriveFolder(
     const lowerQuery = (folderUrlOrId + ' ' + defaultIssuer).toLowerCase();
     if (lowerQuery.includes('outhouse')) {
       itemsToGenerate.push(
-        { name: 'Pelatihan Outhouse Emergency & Trauma Care', category: 'Pelatihan', issue: '2026-08-10', expYears: 3, issuer: 'Penyelenggara Diklat Eksternal' },
-        { name: 'Pelatihan Outhouse Keperawatan Kritis & ICU', category: 'Pelatihan', issue: '2026-08-14', expYears: 3, issuer: 'Kolegium Keperawatan Kritis' },
-        { name: 'Pelatihan Outhouse Kamar Bedah & Sterilisasi CSSD', category: 'Pelatihan', issue: '2026-08-18', expYears: 3, issuer: 'HIPKABI / Pernefri' },
-        { name: 'Pelatihan Outhouse Manajemen Mutu & Akreditasi RS', category: 'Workshop', issue: '2026-08-05', expYears: 3, issuer: 'Lembaga Akreditasi Rumah Sakit' },
-        { name: 'Pelatihan Outhouse Pencegahan & Pengendalian Infeksi (PPI)', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Perhimpunan PPI Indonesia' }
+        { name: 'Pelatihan Outhouse Emergency & Trauma Care', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-10', expYears: 3, issuer: 'Penyelenggara Diklat Eksternal' },
+        { name: 'Pelatihan Outhouse Keperawatan Kritis & ICU', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-14', expYears: 3, issuer: 'Kolegium Keperawatan Kritis' },
+        { name: 'Pelatihan Outhouse Kamar Bedah & Sterilisasi CSSD', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-18', expYears: 3, issuer: 'HIPKABI / Pernefri' },
+        { name: 'Pelatihan Outhouse Manajemen Mutu & Akreditasi RS', recipient: defaultRecipient, category: 'Workshop', issue: '2026-08-05', expYears: 3, issuer: 'Lembaga Akreditasi Rumah Sakit' },
+        { name: 'Pelatihan Outhouse Pencegahan & Pengendalian Infeksi (PPI)', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Perhimpunan PPI Indonesia' }
       );
     } else {
       itemsToGenerate.push(
-        { name: 'Sertifikat SIMRS 24-25 Juni 2026', category: 'Workshop', issue: '2026-06-25', expYears: 3, issuer: 'Tim IT & SIMRS RSUD' },
-        { name: 'Sertifikat Resiko Tinggi 2026', category: 'Pelatihan', issue: '2026-08-12', expYears: 3, issuer: 'Komite Mutu & Keselamatan Pasien' },
-        { name: 'SERTIFIKAT Kemenkes PERAWAT BEDAH 2026', category: 'Pelatihan', issue: '2026-08-20', expYears: 4, issuer: 'Kementerian Kesehatan RI & HIPKABI' },
-        { name: 'Sertifikat HIPKABI 15 -16 agustus 2026', category: 'Pelatihan', issue: '2026-08-16', expYears: 3, issuer: 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)' },
-        { name: 'Sertifikat BTCLS Tahun 2026', category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Penyelenggara Diklat BTCLS Kemenkes' },
-        { name: 'Sertifikat BHD Tahun 2026', category: 'Pelatihan', issue: '2026-08-04', expYears: 2, issuer: 'Instalasi Gawat Darurat & Diklat RS' },
-        { name: 'BTCLS 2026', category: 'Pelatihan', issue: '2026-07-28', expYears: 3, issuer: 'Lembaga Pelatihan Keperawatan Gawat Darurat' }
+        { name: 'Sertifikat SIMRS 24-25 Juni 2026', recipient: defaultRecipient, category: 'Workshop', issue: '2026-06-25', expYears: 3, issuer: 'Tim IT & SIMRS RSUD' },
+        { name: 'Sertifikat Resiko Tinggi 2026', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-12', expYears: 3, issuer: 'Komite Mutu & Keselamatan Pasien' },
+        { name: 'SERTIFIKAT Kemenkes PERAWAT BEDAH 2026', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-20', expYears: 4, issuer: 'Kementerian Kesehatan RI & HIPKABI' },
+        { name: 'Sertifikat HIPKABI 15 -16 agustus 2026', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-16', expYears: 3, issuer: 'Himpunan Perawat Kamar Bedah Indonesia (HIPKABI)' },
+        { name: 'Sertifikat BTCLS Tahun 2026', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-01', expYears: 3, issuer: 'Penyelenggara Diklat BTCLS Kemenkes' },
+        { name: 'Sertifikat BHD Tahun 2026', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-08-04', expYears: 2, issuer: 'Instalasi Gawat Darurat & Diklat RS' },
+        { name: 'BTCLS 2026', recipient: defaultRecipient, category: 'Pelatihan', issue: '2026-07-28', expYears: 3, issuer: 'Lembaga Pelatihan Keperawatan Gawat Darurat' }
       );
     }
   }
 
-  itemsToGenerate.forEach((item, idx) => {
+  itemsToGenerate.forEach((item: any, idx) => {
     const dummyFileId = `${folderId}_item_${idx + 1}`;
     const issueDate = item.issue || new Date().toISOString().split('T')[0];
     const issueYear = parseInt(issueDate.substring(0, 4), 10);
@@ -631,7 +750,7 @@ export async function syncGoogleDriveFolder(
     newlyCreated.push({
       id: `cert-sync-${folderId.substring(0, 6)}-${idx + 1}-${Date.now().toString(36)}`,
       title: item.name,
-      recipientName: defaultRecipient,
+      recipientName: item.recipient || defaultRecipient,
       recipientEmail: 'staff@rsud.go.id',
       issueDate,
       expiryDate,

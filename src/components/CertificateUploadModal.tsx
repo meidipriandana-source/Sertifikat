@@ -1,29 +1,42 @@
 import React, { useState, useRef } from 'react';
 import { 
   X, UploadCloud, FileText, Image as ImageIcon, CheckCircle, 
-  AlertCircle, Cloud, Sparkles, Calendar, User, Tag, Building2, Hash, Clock
+  AlertCircle, Cloud, Sparkles, Calendar, User, Tag, Building2, Hash, Clock,
+  Files, CheckSquare, Layers, Plus, Trash2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { uploadCertificate } from '../services/api';
+import { uploadCertificate, uploadMultipleCertificates, parseCertificateItemInfo } from '../services/api';
 import { GoogleAuthState } from '../services/googleAuth';
-import { Certificate } from '../types';
+import { Certificate, CertificateCategory } from '../types';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
 
 interface CertificateUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (newCert: Certificate) => void;
+  onBatchSuccess?: (newCerts: Certificate[]) => void;
   authState: GoogleAuthState;
   onOpenGoogleConnect: () => void;
+}
+
+interface BatchFileItem {
+  file: File;
+  title: string;
+  recipientName: string;
+  category: CertificateCategory;
 }
 
 export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  onBatchSuccess,
   authState,
   onOpenGoogleConnect
 }) => {
+  const [uploadMode, setUploadMode] = useState<'single' | 'batch'>('single');
+  
+  // Single upload states
   const [title, setTitle] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
@@ -31,7 +44,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const [hasExpiryDate, setHasExpiryDate] = useState(false);
   const [expiryDate, setExpiryDate] = useState('');
   const [issuer, setIssuer] = useState('');
-  const [category, setCategory] = useState<'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya'>('Prestasi');
+  const [category, setCategory] = useState<CertificateCategory>('Pelatihan');
   const [credentialId, setCredentialId] = useState('');
   const [description, setDescription] = useState('');
   const [tagInput, setTagInput] = useState('');
@@ -40,10 +53,18 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Batch upload states
+  const [batchFiles, setBatchFiles] = useState<BatchFileItem[]>([]);
+  const [batchIssuer, setBatchIssuer] = useState('Penyelenggara Diklat Resmi');
+  const [batchValidityYears, setBatchValidityYears] = useState<number>(3);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const batchFileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
@@ -72,7 +93,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     setTags(tags.filter(t => t !== tagToRemove));
   };
 
-  const handleFileChange = (selectedFile: File) => {
+  const handleSingleFileChange = (selectedFile: File) => {
     setErrorMsg(null);
     const validMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!validMimes.includes(selectedFile.type)) {
@@ -97,31 +118,50 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
       setPreviewUrl(null);
     }
 
-    // Auto-fill title from filename if title is empty
-    if (!title) {
-      const cleanName = selectedFile.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-      setTitle(cleanName);
+    // Auto parse title and recipient
+    const parsed = parseCertificateItemInfo(selectedFile.name, 'Sertifikat Pelatihan', 'Staff RSUD');
+    if (!title) setTitle(parsed.title);
+    if (!recipientName && parsed.recipientName !== 'Staff RSUD') setRecipientName(parsed.recipientName);
+    setCategory(parsed.category);
+  };
+
+  const handleBatchFilesAdd = (newFileList: FileList | File[]) => {
+    setErrorMsg(null);
+    const validMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const addedItems: BatchFileItem[] = [];
+
+    Array.from(newFileList).forEach((f) => {
+      if (validMimes.includes(f.type) && f.size <= 30 * 1024 * 1024) {
+        const parsed = parseCertificateItemInfo(f.name, 'Sertifikat Pelatihan', 'Staff Perawat / Medis RSUD');
+        addedItems.push({
+          file: f,
+          title: parsed.title,
+          recipientName: parsed.recipientName,
+          category: parsed.category
+        });
+      }
+    });
+
+    if (addedItems.length === 0) {
+      setErrorMsg('Tidak ada file valid (PDF/JPG/PNG) yang dipilih.');
+      return;
     }
+
+    setBatchFiles((prev) => [...prev, ...addedItems]);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
+  const handleRemoveBatchItem = (index: number) => {
+    setBatchFiles(batchFiles.filter((_, idx) => idx !== index));
   };
 
-  const handleDragLeave = () => {
-    setIsDragging(false);
+  const handleBatchItemChange = (index: number, field: keyof BatchFileItem, value: any) => {
+    const updated = [...batchFiles];
+    updated[index] = { ...updated[index], [field]: value };
+    setBatchFiles(updated);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileChange(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Single Upload Submit
+  const handleSingleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -171,16 +211,13 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
       const createdCert = await uploadCertificate(formData);
 
-      // Trigger confetti celebration
       try {
         confetti({
           particleCount: 80,
           spread: 70,
           origin: { y: 0.6 }
         });
-      } catch (err) {
-        // ignore
-      }
+      } catch (err) {}
 
       onSuccess(createdCert);
       onClose();
@@ -192,21 +229,88 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     }
   };
 
+  // Batch Upload Submit (Processes each file individually and creates separate records)
+  const handleBatchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+
+    if (batchFiles.length === 0) {
+      setErrorMsg('Harap tambahkan minimal 1 file untuk diunggah.');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setBatchProgress({ current: 0, total: batchFiles.length });
+
+      const uploadedCerts: Certificate[] = [];
+
+      for (let i = 0; i < batchFiles.length; i++) {
+        const item = batchFiles[i];
+        const formData = new FormData();
+        formData.append('file', item.file);
+        formData.append('title', item.title.trim());
+        formData.append('recipientName', item.recipientName.trim());
+        formData.append('issueDate', issueDate);
+        
+        if (batchValidityYears > 0) {
+          const baseYear = parseInt(issueDate.substring(0, 4), 10);
+          const expDate = `${baseYear + batchValidityYears}-${issueDate.substring(5)}`;
+          formData.append('expiryDate', expDate);
+        } else {
+          formData.append('expiryDate', '');
+        }
+
+        formData.append('issuer', batchIssuer.trim() || 'Penyelenggara Diklat / Kemenkes');
+        formData.append('category', item.category);
+        formData.append('tags', JSON.stringify(['Batch Multi-File', item.category]));
+
+        const resCert = await uploadCertificate(formData);
+        uploadedCerts.push(resCert);
+        setBatchProgress({ current: i + 1, total: batchFiles.length });
+      }
+
+      try {
+        confetti({
+          particleCount: 100,
+          spread: 80,
+          origin: { y: 0.6 }
+        });
+      } catch (err) {}
+
+      if (onBatchSuccess) {
+        onBatchSuccess(uploadedCerts);
+      } else if (uploadedCerts.length > 0) {
+        onSuccess(uploadedCerts[0]);
+      }
+
+      onClose();
+    } catch (err: any) {
+      console.error('Batch upload error:', err);
+      setErrorMsg(err.message || 'Terjadi kesalahan saat mengunggah kumpulan file.');
+    } finally {
+      setIsSubmitting(false);
+      setBatchProgress(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors">
       <div 
         id="modal-upload-certificate"
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all transform animate-in fade-in zoom-in-95 duration-150"
+        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all my-6 max-h-[92vh] flex flex-col"
       >
         {/* Modal Header */}
-        <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shadow-xs">
               <UploadCloud className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Unggah Sertifikat Baru</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">File fisik otomatis disimpan di Google Drive & terindeks ke Database</p>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">Unggah Sertifikat</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                Pilih unggah satu berkas atau banyak berkas sekaligus (otomatis disendirikan)
+              </p>
             </div>
           </div>
           <button
@@ -219,25 +323,60 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
           </button>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+        {/* Mode Tabs */}
+        <div className="px-6 pt-3 bg-slate-50/50 dark:bg-slate-850/50 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <div className="flex rounded-xl bg-slate-200/70 dark:bg-slate-800 p-1 gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setUploadMode('single');
+                setErrorMsg(null);
+              }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                uploadMode === 'single'
+                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Unggah 1 Berkas</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setUploadMode('batch');
+                setErrorMsg(null);
+              }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                uploadMode === 'batch'
+                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Files className="w-3.5 h-3.5" />
+              <span>Unggah Banyak File Sekaligus (Batch)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-6 space-y-4 overflow-y-auto text-xs text-slate-700 dark:text-slate-300">
           
-          {/* Google Drive Status Banner */}
+          {/* Cloud Storage Banner */}
           <div className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs ${
             authState.isConnected
               ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-300'
-              : 'bg-amber-50/80 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-300'
+              : 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800/60 text-indigo-950 dark:text-indigo-200'
           }`}>
             <div className="flex items-center gap-2.5">
-              <Cloud className={`w-4 h-4 shrink-0 ${authState.isConnected ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`} />
+              <Cloud className={`w-4 h-4 shrink-0 ${authState.isConnected ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`} />
               <div>
                 <span className="font-bold">
-                  {authState.isConnected ? '● Google Drive Aktif' : 'Penyimpanan Google Drive Cloud'}
+                  {authState.isConnected ? '● Terhubung ke Google Drive' : 'Penyimpanan Lokal & Cloud Aktif'}
                 </span>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                  {authState.isConnected
-                    ? 'File fisik disimpan ke folder "📁 Sertifikat Digital" di Google Drive akun Anda.'
-                    : 'Gunakan koneksi Google Drive untuk sinkronisasi cloud real-time.'}
+                <p className="text-[11px] opacity-80 mt-0.5">
+                  Setiap berkas dibuatkan ID unik dan masa berlaku sendiri secara otomatis.
                 </p>
               </div>
             </div>
@@ -245,9 +384,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               <button
                 type="button"
                 onClick={onOpenGoogleConnect}
-                className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 transition-colors ml-2 shadow-2xs cursor-pointer"
+                className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors ml-2 shadow-2xs cursor-pointer"
               >
-                Koneksikan
+                Google Drive
               </button>
             )}
           </div>
@@ -259,388 +398,413 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
             </div>
           )}
 
-          {/* Drag & Drop File Zone */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-              File Dokumen / Gambar <span className="text-rose-500">*</span>
-            </label>
-            <div
-              id="upload-dropzone"
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-                isDragging
-                  ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30'
-                  : file
-                  ? 'border-emerald-300 dark:border-emerald-600 bg-emerald-50/40 dark:bg-emerald-950/20'
-                  : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/50 bg-slate-50/60 dark:bg-slate-800/40'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.webp"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleFileChange(e.target.files[0]);
-                  }
-                }}
-              />
-
-              {file ? (
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3 text-left">
-                    <div className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
-                      {previewUrl ? (
-                        <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
-                      ) : file.type === 'application/pdf' ? (
-                        <FileText className="w-6 h-6 text-rose-500" />
-                      ) : (
-                        <ImageIcon className="w-6 h-6 text-indigo-500" />
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-xs sm:max-w-md">
-                        {file.name}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        {(file.size / 1024).toFixed(1)} KB • {file.type || 'Dokumen'}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1.5 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors">
-                    Ganti File
-                  </span>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto border border-indigo-100 dark:border-indigo-900/50 shadow-2xs">
-                    <UploadCloud className="w-6 h-6" />
-                  </div>
-                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                    Klik untuk memilih file atau drag & drop ke sini
-                  </p>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">
-                    Mendukung format PDF, JPG, PNG, atau WEBP (Maksimal 30 MB)
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Form Fields Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            
-            {/* Title */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Nama Sertifikat <span className="text-rose-500">*</span>
-              </label>
-              <input
-                id="input-cert-title"
-                type="text"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Contoh: Juara 1 Lomba Web Development Nasional"
-                className="w-full px-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all"
-              />
-            </div>
-
-            {/* Recipient Name */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Nama Pemilik / Penerima <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  id="input-recipient-name"
-                  type="text"
-                  required
-                  value={recipientName}
-                  onChange={(e) => setRecipientName(e.target.value)}
-                  placeholder="Contoh: Ahmad Fauzi"
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all"
-                />
-                <User className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-3" />
-              </div>
-            </div>
-
-            {/* Issue Date */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Tanggal Terbit <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  id="input-issue-date"
-                  type="date"
-                  required
-                  value={issueDate}
-                  onChange={(e) => setIssueDate(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all cursor-pointer"
-                />
-                <Calendar className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-3" />
-              </div>
-            </div>
-
-            {/* Expiry Date / Validity Section */}
-            <div className="sm:col-span-2 p-3.5 rounded-2xl bg-slate-50/80 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-indigo-500" />
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider text-[10px]">
-                    Masa Berlaku & Kadaluarsa
-                  </span>
-                </div>
-                
-                {/* Toggle Seumur Hidup vs Ada Kadaluarsa */}
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHasExpiryDate(false);
-                      setExpiryDate('');
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      !hasExpiryDate
-                        ? 'bg-indigo-600 text-white shadow-2xs'
-                        : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600'
-                    }`}
-                  >
-                    ♾️ Seumur Hidup
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHasExpiryDate(true);
-                      if (!expiryDate) {
-                        handleSetExpiryPreset(1);
+          {/* SINGLE FILE FORM */}
+          {uploadMode === 'single' && (
+            <form onSubmit={handleSingleSubmit} className="space-y-4">
+              {/* File Dropzone */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  File Dokumen / Gambar <span className="text-rose-500">*</span>
+                </label>
+                <div
+                  id="upload-dropzone"
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      handleSingleFileChange(e.dataTransfer.files[0]);
+                    }
+                  }}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all ${
+                    isDragging
+                      ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30'
+                      : file
+                      ? 'border-emerald-300 dark:border-emerald-600 bg-emerald-50/40 dark:bg-emerald-950/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/50 bg-slate-50/60 dark:bg-slate-800/40'
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleSingleFileChange(e.target.files[0]);
                       }
                     }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      hasExpiryDate
-                        ? 'bg-indigo-600 text-white shadow-2xs'
-                        : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600'
-                    }`}
-                  >
-                    📅 Ada Masa Berlaku
-                  </button>
-                </div>
-              </div>
+                  />
 
-              {hasExpiryDate ? (
-                <div className="space-y-2 pt-1 border-t border-slate-200/60 dark:border-slate-700">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                    <div className="relative flex-1">
-                      <input
-                        id="input-expiry-date"
-                        type="date"
-                        required={hasExpiryDate}
-                        value={expiryDate}
-                        onChange={(e) => setExpiryDate(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer"
-                      />
-                      <Calendar className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-2.5" />
+                  {file ? (
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 text-left">
+                        <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
+                          {previewUrl ? (
+                            <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
+                          ) : (
+                            <FileText className="w-5 h-5 text-rose-500" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-xs">{file.name}</p>
+                          <p className="text-[11px] text-slate-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold text-indigo-600 hover:underline">Ganti File</span>
                     </div>
-
-                    {/* Quick Presets */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase mr-1">Preset:</span>
-                      {[1, 2, 3, 5].map((yr) => (
-                        <button
-                          key={yr}
-                          type="button"
-                          onClick={() => handleSetExpiryPreset(yr)}
-                          className="px-2 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                        >
-                          +{yr} Thn
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {expiryDate && (
-                    <div className="flex items-center gap-2 pt-1">
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Status Masa Berlaku:</span>
-                      <ExpiryIndicatorBadge expiryDate={expiryDate} variant="compact" />
+                  ) : (
+                    <div className="space-y-1.5">
+                      <UploadCloud className="w-8 h-8 mx-auto text-indigo-500" />
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Klik untuk memilih berkas atau tarik & lepas ke sini
+                      </p>
+                      <p className="text-[11px] text-slate-400">PDF, PNG, JPG (Maks. 30MB)</p>
                     </div>
                   )}
                 </div>
-              ) : (
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                  ✓ Sertifikat berlaku permanen tanpa tanggal kedaluwarsa.
-                </p>
-              )}
-            </div>
-
-            {/* Issuer / Organizer */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Lembaga Penerbit / Penyelenggara
-              </label>
-              <div className="relative">
-                <input
-                  id="input-issuer"
-                  type="text"
-                  value={issuer}
-                  onChange={(e) => setIssuer(e.target.value)}
-                  placeholder="Contoh: Kementerian Komunikasi & Digital"
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all"
-                />
-                <Building2 className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-3" />
               </div>
-            </div>
 
-            {/* Category */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Kategori Sertifikat
-              </label>
-              <select
-                id="select-category"
-                value={category}
-                onChange={(e) => setCategory(e.target.value as any)}
-                className="w-full px-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all cursor-pointer font-medium"
-              >
-                <option value="Prestasi" className="dark:bg-slate-800">Prestasi & Kompetisi</option>
-                <option value="Pelatihan" className="dark:bg-slate-800">Pelatihan & Kursus</option>
-                <option value="Workshop" className="dark:bg-slate-800">Workshop & Webinar</option>
-                <option value="Akademik" className="dark:bg-slate-800">Akademik & Formal</option>
-                <option value="Penghargaan" className="dark:bg-slate-800">Penghargaan / Award</option>
-                <option value="Kelulusan" className="dark:bg-slate-800">Kelulusan & Sertifikasi</option>
-                <option value="Lainnya" className="dark:bg-slate-800">Lainnya</option>
-              </select>
-            </div>
+              {/* Title & Recipient */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Judul Sertifikat / Pelatihan <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Contoh: Pelatihan ICU & Keperawatan Kritis"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
 
-            {/* Credential ID */}
-            <div className="sm:col-span-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[10px]">
-                  Nomor Sertifikat / ID Kredensial
-                </label>
-                <button
-                  type="button"
-                  onClick={handleGenerateCredentialId}
-                  className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 flex items-center gap-1 font-bold cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate Otomatis</span>
-                </button>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Nama Penerima / Pemilik <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={recipientName}
+                    onChange={(e) => setRecipientName(e.target.value)}
+                    placeholder="Contoh: dr. Ahmad Fauzi, Sp.An"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
               </div>
-              <div className="relative">
-                <input
-                  id="input-credential-id"
-                  type="text"
-                  value={credentialId}
-                  onChange={(e) => setCredentialId(e.target.value)}
-                  placeholder="Contoh: CERT-2026-WEB-88231"
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none font-mono transition-all"
-                />
-                <Hash className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-3" />
-              </div>
-            </div>
 
-            {/* Description */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Deskripsi / Catatan Tambahan (Opsional)
-              </label>
-              <textarea
-                id="input-description"
-                rows={2}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Penjelasan singkat mengenai kompetensi atau capaian sertifikat..."
-                className="w-full px-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all resize-none"
-              />
-            </div>
+              {/* Category, Issuer, Dates */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Kategori
+                  </label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value as CertificateCategory)}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="Pelatihan">Pelatihan</option>
+                    <option value="Workshop">Workshop</option>
+                    <option value="Prestasi">Prestasi</option>
+                    <option value="Penghargaan">Penghargaan</option>
+                    <option value="Akademik">Akademik</option>
+                    <option value="Kelulusan">Kelulusan</option>
+                    <option value="Lainnya">Lainnya</option>
+                  </select>
+                </div>
 
-            {/* Tags */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider text-[10px]">
-                Tag & Label
-              </label>
-              <div className="flex gap-2 mb-2">
-                <input
-                  type="text"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddTag();
-                    }
-                  }}
-                  placeholder="Tambah tag (misal: Web Dev, React, Juara 1) lalu Enter"
-                  className="w-full px-4 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-800 outline-none transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddTag}
-                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl shrink-0 transition-colors cursor-pointer"
-                >
-                  Tambah
-                </button>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Tanggal Terbit
+                  </label>
+                  <input
+                    type="date"
+                    value={issueDate}
+                    onChange={(e) => setIssueDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Penyelenggara / Penerbit
+                  </label>
+                  <input
+                    type="text"
+                    value={issuer}
+                    onChange={(e) => setIssuer(e.target.value)}
+                    placeholder="Contoh: Kemenkes RI / Kolegium"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
               </div>
-              {tags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/60"
-                    >
-                      <span>#{tag}</span>
+
+              {/* Expiry Date Section */}
+              <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={hasExpiryDate}
+                      onChange={(e) => {
+                        setHasExpiryDate(e.target.checked);
+                        if (e.target.checked && !expiryDate) handleSetExpiryPreset(3);
+                      }}
+                      className="rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Memiliki Masa Berlaku (Kadaluarsa)</span>
+                  </label>
+
+                  {hasExpiryDate && (
+                    <div className="flex gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleRemoveTag(tag)}
-                        className="text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 cursor-pointer"
+                        onClick={() => handleSetExpiryPreset(1)}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
                       >
-                        <X className="w-3 h-3" />
+                        1 Thn
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetExpiryPreset(3)}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                      >
+                        3 Thn (Medis)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetExpiryPreset(5)}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                      >
+                        5 Thn
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {hasExpiryDate && (
+                  <div className="pt-1">
+                    <input
+                      type="date"
+                      value={expiryDate}
+                      onChange={(e) => setExpiryDate(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Submit Single */}
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-indigo-950/60 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Menyimpan Sertifikat...</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Simpan Sertifikat Sekarang</span>
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          {/* BATCH MULTI-FILE FORM */}
+          {uploadMode === 'batch' && (
+            <form onSubmit={handleBatchSubmit} className="space-y-4">
+              
+              {/* Batch Dropzone */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
+                  Pilih Banyak File PDF/Gambar Sekaligus <span className="text-rose-500">*</span>
+                </label>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                      handleBatchFilesAdd(e.dataTransfer.files);
+                    }
+                  }}
+                  onClick={() => batchFileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                    isDragging
+                      ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/50 bg-slate-50/60 dark:bg-slate-800/40'
+                  }`}
+                >
+                  <input
+                    ref={batchFileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        handleBatchFilesAdd(e.target.files);
+                      }
+                    }}
+                  />
+
+                  <div className="space-y-1.5">
+                    <Files className="w-9 h-9 mx-auto text-indigo-600 dark:text-indigo-400" />
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Tarik & lepas banyak berkas PDF atau klik untuk pilih sekaligus
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Sistem membaca nama berkas dan memisahkan setiap peserta menjadi sertifikat individu
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Batch Table / List */}
+              {batchFiles.length > 0 && (
+                <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                      {batchFiles.length} Berkas Terdeteksi (Disendirikan 1 per 1):
                     </span>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() => setBatchFiles([])}
+                      className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline cursor-pointer"
+                    >
+                      Hapus Semua
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {batchFiles.map((item, idx) => (
+                      <div 
+                        key={idx} 
+                        className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-5 h-5 rounded-full bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold flex items-center justify-center shrink-0">
+                              {idx + 1}
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                              📁 {item.file.name}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveBatchItem(idx)}
+                            className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer p-1"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={item.recipientName}
+                            onChange={(e) => handleBatchItemChange(idx, 'recipientName', e.target.value)}
+                            placeholder="Nama Penerima / Pemilik"
+                            className="px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                          />
+                          <input
+                            type="text"
+                            value={item.title}
+                            onChange={(e) => handleBatchItemChange(idx, 'title', e.target.value)}
+                            placeholder="Judul Pelatihan / Sertifikat"
+                            className="px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
 
-          </div>
+              {/* Global Batch Settings */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Penyelenggara / Penerbit Bersama
+                  </label>
+                  <input
+                    type="text"
+                    value={batchIssuer}
+                    onChange={(e) => setBatchIssuer(e.target.value)}
+                    placeholder="Penyelenggara Diklat / Kemenkes"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
 
-          {/* Modal Footer Buttons */}
-          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
-            <button
-              id="btn-cancel-upload"
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              Batal
-            </button>
-            <button
-              id="btn-submit-upload"
-              type="submit"
-              disabled={isSubmitting}
-              className="px-6 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-lg shadow-indigo-100 dark:shadow-indigo-950/50 active:scale-95 flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Menyimpan ke Google Drive...</span>
-                </>
-              ) : (
-                <>
-                  <UploadCloud className="w-4 h-4" />
-                  <span>Simpan ke Google Drive</span>
-                </>
-              )}
-            </button>
-          </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Masa Berlaku Default
+                  </label>
+                  <select
+                    value={batchValidityYears}
+                    onChange={(e) => setBatchValidityYears(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  >
+                    <option value={1}>1 Tahun</option>
+                    <option value={2}>2 Tahun</option>
+                    <option value={3}>3 Tahun (Standar Pelatihan Medis)</option>
+                    <option value={4}>4 Tahun</option>
+                    <option value={5}>5 Tahun</option>
+                    <option value={0}>Seumur Hidup / Tanpa Expired</option>
+                  </select>
+                </div>
+              </div>
 
-        </form>
+              {/* Submit Batch */}
+              <button
+                type="submit"
+                disabled={isSubmitting || batchFiles.length === 0}
+                className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-indigo-950/60 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>
+                      Mengunggah & Memisahkan {batchProgress?.current || 0} dari {batchProgress?.total || batchFiles.length} Berkas...
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Unggah {batchFiles.length} Berkas Secara Terpisah Sekarang</span>
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 bg-slate-50 dark:bg-slate-850 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-white dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            Tutup
+          </button>
+        </div>
+
       </div>
     </div>
   );
