@@ -19,17 +19,18 @@ interface ExpiryMonitorModalProps {
 export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
   isOpen,
   onClose,
-  certificates,
+  certificates = [],
   onSelectCertificate
 }) => {
   const [activeTab, setActiveTab] = useState<'all' | 'expiring_soon' | 'expired' | 'valid'>('expiring_soon');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedSummary, setCopiedSummary] = useState(false);
 
-  const summary = getExpirySummary(certificates);
+  const safeCertificates = Array.isArray(certificates) ? certificates : [];
+  const summary = getExpirySummary(safeCertificates);
 
   // Filter items based on activeTab and searchQuery
-  const filteredList = certificates
+  const filteredList = safeCertificates
     .map(cert => ({
       cert,
       details: getExpiryDetails(cert.expiryDate)
@@ -68,7 +69,7 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
     });
 
   const handleCopyAlertReport = () => {
-    const expiringSoonList = certificates
+    const expiringSoonList = safeCertificates
       .map(c => ({ cert: c, details: getExpiryDetails(c.expiryDate) }))
       .filter(item => item.details.status === 'expiring_soon' || item.details.status === 'expired');
 

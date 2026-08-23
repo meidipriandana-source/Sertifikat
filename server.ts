@@ -195,7 +195,14 @@ function getCertificatesFromDB(): CertificateRecord[] {
       return INITIAL_SEED;
     }
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as any).certificates)) {
+      return (parsed as any).certificates;
+    }
+    return INITIAL_SEED;
   } catch (err) {
     console.error('Error reading certificates DB:', err);
     return INITIAL_SEED;
@@ -1352,6 +1359,60 @@ app.delete('/api/certificates/:id', async (req: Request, res: Response) => {
     res.json({
       success: true,
       message: 'Sertifikat berhasil dihapus dari database.'
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 6b. Bulk Delete certificates
+app.post('/api/certificates/bulk-delete', async (req: Request, res: Response) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Daftar ID sertifikat yang akan dihapus tidak valid.'
+      });
+    }
+
+    const records = getCertificatesFromDB();
+    const authHeader = req.headers.authorization;
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7).trim() : null;
+
+    const targets = records.filter(c => ids.includes(c.id));
+
+    if (targets.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tidak ada sertifikat yang cocok untuk dihapus.'
+      });
+    }
+
+    // If access token is provided, attempt to delete files from Google Drive
+    if (accessToken) {
+      for (const target of targets) {
+        if (target.driveFileId && !target.driveFileId.startsWith('drive-mock-') && !target.driveFileId.startsWith('GDRIVE_') && !target.driveFileId.startsWith('SAMPLE')) {
+          try {
+            await fetch(`https://www.googleapis.com/drive/v3/files/${target.driveFileId}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+          } catch (delErr) {
+            console.warn(`Could not delete file ${target.driveFileId} from Drive:`, delErr);
+          }
+        }
+      }
+    }
+
+    const idSet = new Set(ids);
+    const filtered = records.filter(c => !idSet.has(c.id));
+    saveCertificatesToDB(filtered);
+
+    res.json({
+      success: true,
+      message: `Berhasil menghapus ${targets.length} sertifikat terpilih.`,
+      deletedCount: targets.length
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

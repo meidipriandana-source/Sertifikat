@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { 
   Search, ExternalLink, Download, Eye, Trash2, Calendar, User, 
   Building2, FileText, Image as ImageIcon, LayoutGrid, Table, 
-  ArrowUpDown, ShieldCheck, Sparkles, Folder, CalendarRange, RotateCcw, X, Clock, AlertTriangle, BellRing, Plus
+  ArrowUpDown, ShieldCheck, Sparkles, Folder, CalendarRange, RotateCcw, X, Clock, AlertTriangle, BellRing, Plus,
+  CheckSquare, Square, Check, Layers
 } from 'lucide-react';
 import { Certificate, CategoryItem } from '../types';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
@@ -14,6 +15,7 @@ interface CertificateListProps {
   certificates: Certificate[];
   onSelectCertificate: (cert: Certificate) => void;
   onDeleteCertificate: (cert: Certificate) => void;
+  onDeleteMultipleCertificates?: (certs: Certificate[]) => void;
   categoriesList?: CategoryItem[];
   searchQuery: string;
   onSearchChange: (q: string) => void;
@@ -30,6 +32,7 @@ interface CertificateListProps {
   expiryFilter: 'all' | 'expiring_soon' | 'expired' | 'valid' | 'lifetime';
   onExpiryFilterChange: (filter: 'all' | 'expiring_soon' | 'expired' | 'valid' | 'lifetime') => void;
   onOpenExpiryMonitor: () => void;
+  onOpenCategoryManager?: () => void;
 }
 
 
@@ -52,9 +55,10 @@ function formatBytes(bytes: number): string {
 }
 
 export const CertificateList: React.FC<CertificateListProps> = ({
-  certificates,
+  certificates = [],
   onSelectCertificate,
   onDeleteCertificate,
+  onDeleteMultipleCertificates,
   categoriesList = [],
   searchQuery,
   onSearchChange,
@@ -70,16 +74,19 @@ export const CertificateList: React.FC<CertificateListProps> = ({
   onOpenUpload,
   expiryFilter = 'all',
   onExpiryFilterChange,
-  onOpenExpiryMonitor
+  onOpenExpiryMonitor,
+  onOpenCategoryManager
 }) => {
-  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('table');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const hasActiveDateFilter = Boolean(startDate || endDate);
+  const safeCertificates = Array.isArray(certificates) ? certificates : [];
 
   // Compute expiry stats for badges
-  const expiryCounts = certificates.reduce(
+  const expiryCounts = safeCertificates.reduce(
     (acc, cert) => {
-      const d = getExpiryDetails(cert.expiryDate);
+      const d = getExpiryDetails(cert?.expiryDate);
       if (d.status === 'expiring_soon') acc.expiringSoon++;
       else if (d.status === 'expired') acc.expired++;
       else if (d.status === 'valid') acc.valid++;
@@ -90,7 +97,8 @@ export const CertificateList: React.FC<CertificateListProps> = ({
   );
 
   // Filter certificates by expiry status if selected
-  const displayedCertificates = certificates.filter(cert => {
+  const displayedCertificates = safeCertificates.filter(cert => {
+    if (!cert) return false;
     if (expiryFilter === 'all') return true;
     const d = getExpiryDetails(cert.expiryDate);
     if (expiryFilter === 'expiring_soon') return d.status === 'expiring_soon';
@@ -99,6 +107,58 @@ export const CertificateList: React.FC<CertificateListProps> = ({
     if (expiryFilter === 'lifetime') return d.status === 'lifetime';
     return true;
   });
+
+  // Selection helpers
+  const isAllDisplayedSelected = displayedCertificates.length > 0 && displayedCertificates.every(c => selectedIds.has(c.id));
+  const isSomeDisplayedSelected = displayedCertificates.some(c => selectedIds.has(c.id)) && !isAllDisplayedSelected;
+
+  const toggleSelectOne = (id: string, e?: React.MouseEvent | React.ChangeEvent) => {
+    e?.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllDisplayed = () => {
+    if (isAllDisplayedSelected) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        displayedCertificates.forEach(c => {
+          if (c?.id) next.delete(c.id);
+        });
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        displayedCertificates.forEach(c => {
+          if (c?.id) next.add(c.id);
+        });
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const handleTriggerBulkDelete = () => {
+    const selectedCerts = certificates.filter(c => selectedIds.has(c.id));
+    if (selectedCerts.length > 0) {
+      if (onDeleteMultipleCertificates) {
+        onDeleteMultipleCertificates(selectedCerts);
+      } else if (selectedCerts.length === 1) {
+        onDeleteCertificate(selectedCerts[0]);
+      }
+    }
+  };
 
   const handleQuickPreset = (preset: 'all' | 'this_month' | 'this_year' | 'last_30_days' | 'last_year') => {
 
@@ -426,6 +486,49 @@ export const CertificateList: React.FC<CertificateListProps> = ({
         </button>
       </div>
 
+      {/* CONTRENG / BULK ACTION TOOLBAR (When 1 or more items selected) */}
+      {selectedIds.size > 0 && (
+        <div 
+          id="bar-bulk-actions"
+          className="mt-4 p-3.5 sm:p-4 bg-slate-900 dark:bg-slate-950 text-white rounded-2xl shadow-xl border border-indigo-500/30 flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200"
+        >
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="flex items-center gap-2 bg-indigo-600/30 border border-indigo-400/40 text-indigo-200 px-3 py-1.5 rounded-xl font-bold text-xs">
+              <CheckSquare className="w-4 h-4 text-indigo-400" />
+              <span>{selectedIds.size} Sertifikat Dicontreng / Dipilih</span>
+            </div>
+            <button
+              type="button"
+              id="btn-select-all-toggle"
+              onClick={toggleSelectAllDisplayed}
+              className="text-xs text-slate-300 hover:text-white font-semibold underline underline-offset-2 cursor-pointer transition-colors"
+            >
+              {isAllDisplayedSelected ? 'Batalkan Semua' : `Pilih Semua (${displayedCertificates.length})`}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              id="btn-cancel-selection"
+              onClick={handleClearSelection}
+              className="px-3.5 py-2 text-xs font-semibold rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
+              Batal
+            </button>
+            <button
+              id="btn-bulk-delete"
+              type="button"
+              onClick={handleTriggerBulkDelete}
+              className="px-4 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-950/40 flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4 stroke-[2.5]" />
+              <span>Hapus {selectedIds.size} Pilihan</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content */}
       {displayedCertificates.length === 0 ? (
         <div className="py-16 text-center">
@@ -478,15 +581,40 @@ export const CertificateList: React.FC<CertificateListProps> = ({
           {displayedCertificates.map((cert) => {
             const catStyle = getCategoryTheme(cert.category, categoriesList);
             const isPdf = cert.mimeType === 'application/pdf';
+            const isSelected = selectedIds.has(cert.id);
 
             return (
               <div
                 key={cert.id}
                 id={`cert-card-${cert.id}`}
-                className="bg-white dark:bg-slate-850 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/50 hover:shadow-md dark:hover:shadow-indigo-950/30 transition-all flex flex-col justify-between overflow-hidden group"
+                className={`bg-white dark:bg-slate-850 rounded-2xl border transition-all flex flex-col justify-between overflow-hidden group ${
+                  isSelected 
+                    ? 'border-indigo-500 ring-2 ring-indigo-500/50 dark:ring-indigo-400/50 shadow-md shadow-indigo-500/10' 
+                    : 'border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/50 hover:shadow-md dark:hover:shadow-indigo-950/30'
+                }`}
               >
                 {/* Visual Thumbnail Preview Header Banner */}
                 <div className="relative">
+                  {/* Selection Checkbox for Grid Card */}
+                  <button
+                    type="button"
+                    id={`checkbox-cert-grid-${cert.id}`}
+                    onClick={(e) => toggleSelectOne(cert.id, e)}
+                    className={`absolute top-2.5 left-2.5 z-20 w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer shadow-md ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white ring-2 ring-white dark:ring-slate-900 scale-105'
+                        : 'bg-white/90 dark:bg-slate-900/90 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-300 dark:border-slate-700 hover:scale-105'
+                    }`}
+                    title={isSelected ? 'Batalkan contreng sertifikat ini' : 'Contreng untuk hapus / pilih sertifikat ini'}
+                    aria-label="Pilih sertifikat untuk dihapus"
+                  >
+                    {isSelected ? (
+                      <CheckSquare className="w-4 h-4 stroke-[2.5]" />
+                    ) : (
+                      <Square className="w-4 h-4 stroke-[1.5]" />
+                    )}
+                  </button>
+
                   <CertificateThumbnail 
                     certificate={cert} 
                     size="grid" 
@@ -496,7 +624,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                   />
                   
                   {/* Top Floating Badge Bar */}
-                  <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+                  <div className="absolute top-2.5 left-11 right-2.5 flex items-center justify-between pointer-events-none">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border shadow-xs ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}>
                       {cert.category}
                     </span>
@@ -617,29 +745,67 @@ export const CertificateList: React.FC<CertificateListProps> = ({
       ) : (
         /* TABLE VIEW */
         <div className="pt-4 overflow-x-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs">
-          <table className="w-full min-w-[1180px] text-left text-xs text-slate-600 dark:text-slate-300 border-collapse">
+          <table className="w-full min-w-[1220px] text-left text-xs text-slate-600 dark:text-slate-300 border-collapse">
             <thead className="bg-slate-50/90 dark:bg-slate-850/90 border-b border-slate-200/80 dark:border-slate-800">
               <tr className="text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider font-bold">
-                <th className="py-3.5 px-4 w-[95px] min-w-[90px] text-center">Pratinjau</th>
-                <th className="py-3.5 px-4 min-w-[260px]">Nama Sertifikat</th>
-                <th className="py-3.5 px-4 min-w-[180px]">Pemilik / Peserta</th>
+                {/* Contreng Column Header */}
+                <th className="py-3.5 px-3 w-[46px] text-center">
+                  <div className="flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      id="checkbox-select-all-table"
+                      checked={isAllDisplayedSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = isSomeDisplayedSelected;
+                      }}
+                      onChange={toggleSelectAllDisplayed}
+                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-600 dark:bg-slate-800 cursor-pointer accent-indigo-600"
+                      title="Contreng / Pilih Semua Sertifikat"
+                    />
+                  </div>
+                </th>
+                <th className="py-3.5 px-3 w-[85px] text-center">Pratinjau</th>
+                <th className="py-3.5 px-4 min-w-[250px]">Nama Sertifikat</th>
+                <th className="py-3.5 px-4 min-w-[175px]">Pemilik / Peserta</th>
                 <th className="py-3.5 px-3 min-w-[110px]">Kategori</th>
-                <th className="py-3.5 px-4 min-w-[190px]">Lembaga Penerbit</th>
+                <th className="py-3.5 px-4 min-w-[180px]">Lembaga Penerbit</th>
                 <th className="py-3.5 px-3 min-w-[115px] text-center">Tanggal Terbit</th>
                 <th className="py-3.5 px-4 min-w-[155px]">Masa Berlaku</th>
-                <th className="py-3.5 px-3 min-w-[130px] whitespace-nowrap">Format / Ukuran</th>
-                <th className="py-3.5 px-4 min-w-[180px] text-right whitespace-nowrap">Aksi</th>
+                <th className="py-3.5 px-3 min-w-[125px] whitespace-nowrap">Format / Ukuran</th>
+                <th className="py-3.5 px-4 min-w-[170px] text-right whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {displayedCertificates.map((cert) => {
                 const catStyle = getCategoryTheme(cert.category, categoriesList);
                 const isPdf = cert.mimeType === 'application/pdf';
+                const isSelected = selectedIds.has(cert.id);
 
                 return (
-                  <tr key={cert.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                  <tr 
+                    key={cert.id} 
+                    className={`transition-colors ${
+                      isSelected 
+                        ? 'bg-indigo-50/80 dark:bg-indigo-950/40 font-medium border-l-4 border-indigo-600 dark:border-indigo-400' 
+                        : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    {/* Contreng Checkbox Column */}
+                    <td className="py-3 px-3 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center">
+                        <input
+                          type="checkbox"
+                          id={`checkbox-row-${cert.id}`}
+                          checked={isSelected}
+                          onChange={(e) => toggleSelectOne(cert.id, e)}
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-600 dark:bg-slate-800 cursor-pointer accent-indigo-600"
+                          title="Contreng untuk hapus / pilih sertifikat ini"
+                        />
+                      </div>
+                    </td>
+
                     {/* Thumbnail Preview Column with Hover Zoom */}
-                    <td className="py-3 px-4 text-center align-middle">
+                    <td className="py-3 px-3 text-center align-middle">
                       <div className="flex items-center justify-center">
                         <CertificateThumbnail 
                           certificate={cert}
@@ -743,12 +909,26 @@ export const CertificateList: React.FC<CertificateListProps> = ({
 
       {/* Footer Info */}
       <div className="pt-5 mt-5 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 dark:text-slate-400 gap-2">
-        <p className="font-medium">
-          Menampilkan <span className="font-bold text-slate-800 dark:text-slate-200">{certificates.length}</span> data terverifikasi
-        </p>
-        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-medium">
-          <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-          <span>Semua file fisik tersimpan aman di Google Drive Storage</span>
+        <div>
+          <span>Menampilkan <strong className="text-slate-800 dark:text-slate-200">{displayedCertificates.length}</strong> dari <strong className="text-slate-800 dark:text-slate-200">{certificates.length}</strong> total sertifikat</span>
+          {selectedIds.size > 0 && (
+            <span className="ml-2 font-bold text-indigo-600 dark:text-indigo-400">({selectedIds.size} dicontreng untuk dihapus)</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {selectedIds.size > 0 && (
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="text-xs text-rose-600 dark:text-rose-400 hover:underline font-semibold cursor-pointer"
+            >
+              Hapus Semua Centang ({selectedIds.size})
+            </button>
+          )}
+          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Tersinkronisasi dengan Google Drive Cloud Storage</span>
+          </div>
         </div>
       </div>
 

@@ -29,8 +29,8 @@ interface CategoryManagerModalProps {
 export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   isOpen,
   onClose,
-  categories,
-  certificates,
+  categories = [],
+  certificates = [],
   onCategoriesChange,
   onSelectCategoryFilter
 }) => {
@@ -53,10 +53,14 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
 
   if (!isOpen) return null;
 
+  const safeCertificates = Array.isArray(certificates) ? certificates : [];
+
   // Compute live certificate counts for each category
   const usageCountMap: Record<string, number> = {};
-  certificates.forEach(c => {
-    usageCountMap[c.category] = (usageCountMap[c.category] || 0) + 1;
+  safeCertificates.forEach(c => {
+    if (c?.category) {
+      usageCountMap[c.category] = (usageCountMap[c.category] || 0) + 1;
+    }
   });
 
   const handleStartCreate = () => {

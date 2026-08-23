@@ -160,8 +160,16 @@ export function mergeIntoLocalCertificates(freshItems: Certificate[]): void {
   try {
     const current = getLocalCertificates();
     const map = new Map<string, Certificate>();
-    current.forEach(c => map.set(c.id, c));
-    freshItems.forEach(c => map.set(c.id, c));
+    if (Array.isArray(current)) {
+      current.forEach(c => {
+        if (c?.id) map.set(c.id, c);
+      });
+    }
+    if (Array.isArray(freshItems)) {
+      freshItems.forEach(c => {
+        if (c?.id) map.set(c.id, c);
+      });
+    }
     const merged = Array.from(map.values());
     saveLocalCertificates(merged);
   } catch (err) {
@@ -441,6 +449,43 @@ export async function deleteCertificate(id: string): Promise<void> {
   saveLocalCertificates(list);
 }
 
+export async function deleteMultipleCertificates(ids: string[]): Promise<number> {
+  if (!ids || ids.length === 0) return 0;
+
+  const authState = getStoredAuthState();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+
+  if (authState.isConnected && authState.accessToken) {
+    headers['Authorization'] = `Bearer ${authState.accessToken}`;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/certificates/bulk-delete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids })
+    });
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.deletedCount) {
+      // Local sync
+      const idSet = new Set(ids);
+      const list = getLocalCertificates().filter(c => !idSet.has(c.id));
+      saveLocalCertificates(list);
+      return data.deletedCount;
+    }
+  } catch (err) {
+    console.warn('Backend bulk-delete unavailable, deleting from client storage:', err);
+  }
+
+  // Fallback local storage deletion
+  const idSet = new Set(ids);
+  const list = getLocalCertificates().filter(c => !idSet.has(c.id));
+  saveLocalCertificates(list);
+  return ids.length;
+}
+
 export async function fetchStats(): Promise<CertificateStats> {
   try {
     const res = await fetch(`${API_BASE}/stats`);
@@ -452,14 +497,17 @@ export async function fetchStats(): Promise<CertificateStats> {
     console.warn('Backend stats unavailable, calculating client-side stats:', err);
   }
 
-  const list = getLocalCertificates();
-  const total = list.length;
-  const totalStorageBytes = list.reduce((acc, c) => acc + (c.fileSize || 0), 0);
-  const totalRecipients = new Set(list.map(c => c.recipientName.trim().toLowerCase())).size;
+  const list = getLocalCertificates() || [];
+  const safeList = Array.isArray(list) ? list : [];
+  const total = safeList.length;
+  const totalStorageBytes = safeList.reduce((acc, c) => acc + (c?.fileSize || 0), 0);
+  const totalRecipients = new Set(safeList.map(c => (c?.recipientName || '').trim().toLowerCase())).size;
   const categoryDistribution: Record<string, number> = {};
 
-  list.forEach(c => {
-    categoryDistribution[c.category] = (categoryDistribution[c.category] || 0) + 1;
+  safeList.forEach(c => {
+    if (c?.category) {
+      categoryDistribution[c.category] = (categoryDistribution[c.category] || 0) + 1;
+    }
   });
 
   return {
@@ -468,9 +516,9 @@ export async function fetchStats(): Promise<CertificateStats> {
     totalStorageBytes,
     categoryDistribution,
     monthlyTrends: [
-      { month: 'Jun', count: list.filter(c => c.issueDate.includes('-06-')).length },
-      { month: 'Jul', count: list.filter(c => c.issueDate.includes('-07-')).length },
-      { month: 'Agu', count: list.filter(c => c.issueDate.includes('-08-')).length }
+      { month: 'Jun', count: safeList.filter(c => c?.issueDate && c.issueDate.includes('-06-')).length },
+      { month: 'Jul', count: safeList.filter(c => c?.issueDate && c.issueDate.includes('-07-')).length },
+      { month: 'Agu', count: safeList.filter(c => c?.issueDate && c.issueDate.includes('-08-')).length }
     ]
   };
 }
@@ -1166,14 +1214,18 @@ export async function fetchCategories(): Promise<CategoryItem[]> {
   }
 
   // Local fallback: count usage from local certificates
-  const localCats = getLocalCategories();
-  const certs = getLocalCertificates();
+  const localCats = getLocalCategories() || [];
+  const safeCats = Array.isArray(localCats) ? localCats : DEFAULT_CATEGORIES;
+  const certs = getLocalCertificates() || [];
+  const safeCerts = Array.isArray(certs) ? certs : [];
   const counts: Record<string, number> = {};
-  certs.forEach(c => {
-    counts[c.category] = (counts[c.category] || 0) + 1;
+  safeCerts.forEach(c => {
+    if (c?.category) {
+      counts[c.category] = (counts[c.category] || 0) + 1;
+    }
   });
 
-  return localCats.map(cat => ({
+  return safeCats.map(cat => ({
     ...cat,
     usageCount: counts[cat.name] || 0
   }));

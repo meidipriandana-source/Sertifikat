@@ -36,7 +36,7 @@ function formatBytes(bytes: number): string {
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
-  certificates,
+  certificates = [],
   stats,
   selectedCategory,
   onSelectCategory,
@@ -46,22 +46,27 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onFilterExpiring,
   onOpenUpload
 }) => {
-  const totalCount = certificates.length;
-  const uniqueRecipients = new Set(certificates.map(c => c.recipientName.trim().toLowerCase())).size;
-  const totalSize = certificates.reduce((acc, c) => acc + (c.fileSize || 0), 0);
+  const safeCertificates = Array.isArray(certificates) ? certificates : [];
+  const safeCategoriesList = Array.isArray(categoriesList) ? categoriesList : [];
+
+  const totalCount = safeCertificates.length;
+  const uniqueRecipients = new Set(safeCertificates.map(c => (c.recipientName || '').trim().toLowerCase())).size;
+  const totalSize = safeCertificates.reduce((acc, c) => acc + (c.fileSize || 0), 0);
   
-  const pdfCount = certificates.filter(c => c.mimeType === 'application/pdf').length;
-  const imgCount = certificates.filter(c => c.mimeType.startsWith('image/')).length;
+  const pdfCount = safeCertificates.filter(c => c.mimeType === 'application/pdf').length;
+  const imgCount = safeCertificates.filter(c => c.mimeType && c.mimeType.startsWith('image/')).length;
 
   // Expiry stats calculation
-  const expiringSoonCerts = certificates.filter(c => getExpiryDetails(c.expiryDate).status === 'expiring_soon');
-  const expiredCerts = certificates.filter(c => getExpiryDetails(c.expiryDate).status === 'expired');
+  const expiringSoonCerts = safeCertificates.filter(c => getExpiryDetails(c.expiryDate).status === 'expiring_soon');
+  const expiredCerts = safeCertificates.filter(c => getExpiryDetails(c.expiryDate).status === 'expired');
 
   // Build dynamic categories list (Semua + all custom/system categories + any uncategorized names in certificates)
   const categoryNamesSet = new Set<string>();
-  categoriesList.forEach(c => categoryNamesSet.add(c.name));
-  certificates.forEach(c => {
-    if (c.category) categoryNamesSet.add(c.category);
+  safeCategoriesList.forEach(c => {
+    if (c?.name) categoryNamesSet.add(c.name);
+  });
+  safeCertificates.forEach(c => {
+    if (c?.category) categoryNamesSet.add(c.category);
   });
 
   const categories = ['Semua', ...Array.from(categoryNamesSet)];
@@ -70,8 +75,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const categoryDistRaw: { name: string; count: number; colorHex: string }[] = [];
   const predefinedColors = ['#6366f1', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6'];
 
-  categoriesList.forEach((cat, index) => {
-    const count = certificates.filter(c => c.category === cat.name).length;
+  safeCategoriesList.forEach((cat, index) => {
+    if (!cat?.name) return;
+    const count = safeCertificates.filter(c => c.category === cat.name).length;
     if (count > 0) {
       categoryDistRaw.push({
         name: cat.name,
@@ -82,11 +88,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   });
 
   // Check any certificates in categories not in categoriesList
-  certificates.forEach(c => {
-    if (c.category && !categoryDistRaw.some(item => item.name === c.category)) {
+  safeCertificates.forEach(c => {
+    if (c?.category && !categoryDistRaw.some(item => item.name === c.category)) {
       categoryDistRaw.push({
         name: c.category,
-        count: certificates.filter(item => item.category === c.category).length,
+        count: safeCertificates.filter(item => item.category === c.category).length,
         colorHex: '#64748b'
       });
     }

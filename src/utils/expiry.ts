@@ -88,13 +88,16 @@ export function getExpiryDetails(expiryDate?: string | null): ExpiryDetails {
   };
 }
 
-export function getExpirySummary(certificates: { expiryDate?: string }[]) {
+export function getExpirySummary(certificates: { expiryDate?: string }[] = []) {
   let expiringSoonCount = 0;
   let expiredCount = 0;
   let validCount = 0;
   let lifetimeCount = 0;
 
-  for (const cert of certificates) {
+  const safeList = Array.isArray(certificates) ? certificates : [];
+
+  for (const cert of safeList) {
+    if (!cert) continue;
     const details = getExpiryDetails(cert.expiryDate);
     if (details.status === 'expiring_soon') {
       expiringSoonCount++;

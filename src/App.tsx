@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  fetchCertificates, fetchStats, deleteCertificate, fetchCategories, getLastCacheTimestamp 
+  fetchCertificates, fetchStats, deleteCertificate, deleteMultipleCertificates, fetchCategories, getLastCacheTimestamp 
 } from './services/api';
 import { 
   getStoredAuthState, GoogleAuthState 
@@ -43,6 +43,7 @@ export default function App() {
   // Modals & Selection
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null);
   const [certificateToDelete, setCertificateToDelete] = useState<Certificate | null>(null);
+  const [certificatesToDelete, setCertificatesToDelete] = useState<Certificate[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
@@ -111,7 +112,9 @@ export default function App() {
   const loadCategories = useCallback(async () => {
     try {
       const cats = await fetchCategories();
-      setCategoriesList(cats);
+      if (Array.isArray(cats)) {
+        setCategoriesList(cats);
+      }
     } catch (err) {
       console.error('Failed to load categories:', err);
     }
@@ -133,16 +136,17 @@ export default function App() {
         fetchStats(),
         fetchCategories().catch(() => [])
       ]);
-      setCertificates(certData.data);
-      setIsUsingCache(Boolean(certData.fromCache));
+      const validCerts = certData && Array.isArray(certData.data) ? certData.data : [];
+      setCertificates(validCerts);
+      setIsUsingCache(Boolean(certData?.fromCache));
       setLastSyncedAt(getLastCacheTimestamp());
-      setStats(statsData);
-      if (catsData && catsData.length > 0) {
+      setStats(statsData || null);
+      if (Array.isArray(catsData) && catsData.length > 0) {
         setCategoriesList(catsData);
       }
 
       // Check for certificates expiring within 30 days and alert the user once per session
-      const summary = getExpirySummary(certData.data);
+      const summary = getExpirySummary(validCerts);
       if (!hasNotifiedExpiry && (summary.expiringSoonCount > 0 || summary.expiredCount > 0)) {
         setHasNotifiedExpiry(true);
         if (summary.expiringSoonCount > 0 && summary.expiredCount > 0) {
@@ -206,15 +210,28 @@ export default function App() {
 
   const handleRequestDelete = (cert: Certificate) => {
     setCertificateToDelete(cert);
+    setCertificatesToDelete([]);
   };
 
-  const handleConfirmDelete = async (id: string) => {
+  const handleRequestDeleteMultiple = (certs: Certificate[]) => {
+    setCertificatesToDelete(certs);
+    setCertificateToDelete(null);
+  };
+
+  const handleConfirmDeleteBatch = async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
     try {
       setIsDeleting(true);
-      await deleteCertificate(id);
-      showToast('Sertifikat berhasil dihapus dari database.', 'info');
+      if (ids.length === 1) {
+        await deleteCertificate(ids[0]);
+        showToast('Sertifikat berhasil dihapus dari database.', 'info');
+      } else {
+        const count = await deleteMultipleCertificates(ids);
+        showToast(`✓ Berhasil menghapus ${count} sertifikat secara permanen.`, 'info');
+      }
       setCertificateToDelete(null);
-      if (selectedCertificate?.id === id) {
+      setCertificatesToDelete([]);
+      if (selectedCertificate && ids.includes(selectedCertificate.id)) {
         setSelectedCertificate(null);
       }
       loadData();
@@ -442,6 +459,7 @@ export default function App() {
           certificates={certificates}
           onSelectCertificate={setSelectedCertificate}
           onDeleteCertificate={handleRequestDelete}
+          onDeleteMultipleCertificates={handleRequestDeleteMultiple}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           sortBy={sortBy}
@@ -539,10 +557,14 @@ export default function App() {
       />
 
       <DeleteConfirmModal
-        isOpen={Boolean(certificateToDelete)}
-        onClose={() => setCertificateToDelete(null)}
+        isOpen={Boolean(certificateToDelete) || certificatesToDelete.length > 0}
+        onClose={() => {
+          setCertificateToDelete(null);
+          setCertificatesToDelete([]);
+        }}
         certificate={certificateToDelete}
-        onConfirmDelete={handleConfirmDelete}
+        certificates={certificatesToDelete}
+        onConfirmDelete={handleConfirmDeleteBatch}
         isDeleting={isDeleting}
       />
 
