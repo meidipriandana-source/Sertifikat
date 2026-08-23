@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { X, Download, FileSpreadsheet, FileJson, Printer, Check, Copy, RotateCcw } from 'lucide-react';
 import { Certificate } from '../types';
 
@@ -16,8 +17,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onOpenRestore
 }) => {
   const [copied, setCopied] = useState(false);
-
-  if (!isOpen) return null;
 
   const handleExportCSV = () => {
     const headers = [
@@ -83,11 +82,23 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors">
-      <div 
-        id="modal-export-data"
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-slate-800 transition-all"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            id="modal-export-data"
+            className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-slate-800 transition-all"
+          >
         {/* Header */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850">
           <div className="flex items-center gap-3">
@@ -203,7 +214,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             Tutup
           </button>
         </div>
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

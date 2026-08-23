@@ -2,16 +2,19 @@ import React, { useState } from 'react';
 import { 
   Search, ExternalLink, Download, Eye, Trash2, Calendar, User, 
   Building2, FileText, Image as ImageIcon, LayoutGrid, Table, 
-  ArrowUpDown, ShieldCheck, Sparkles, Folder, CalendarRange, RotateCcw, X, Clock, AlertTriangle, BellRing
+  ArrowUpDown, ShieldCheck, Sparkles, Folder, CalendarRange, RotateCcw, X, Clock, AlertTriangle, BellRing, Plus
 } from 'lucide-react';
-import { Certificate } from '../types';
+import { Certificate, CategoryItem } from '../types';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
+import { CertificateThumbnail } from './CertificateThumbnail';
 import { getExpiryDetails } from '../utils/expiry';
+import { getCategoryTheme } from '../utils/categoryColors';
 
 interface CertificateListProps {
   certificates: Certificate[];
   onSelectCertificate: (cert: Certificate) => void;
   onDeleteCertificate: (cert: Certificate) => void;
+  categoriesList?: CategoryItem[];
   searchQuery: string;
   onSearchChange: (q: string) => void;
   sortBy: string;
@@ -52,6 +55,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
   certificates,
   onSelectCertificate,
   onDeleteCertificate,
+  categoriesList = [],
   searchQuery,
   onSearchChange,
   sortBy,
@@ -146,7 +150,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-            Menampilkan data tersinkronisasi dengan Google Drive API v3
+            Menampilkan data tersinkronisasi dengan Google Drive
           </p>
         </div>
 
@@ -220,6 +224,17 @@ export const CertificateList: React.FC<CertificateListProps> = ({
               <Table className="w-4 h-4" />
             </button>
           </div>
+
+          {/* Quick Primary Upload CTA */}
+          <button
+            type="button"
+            id="btn-list-header-upload"
+            onClick={onOpenUpload}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 active:scale-95 transition-all cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            <span>Unggah Sertifikat</span>
+          </button>
 
         </div>
       </div>
@@ -461,7 +476,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
         /* GRID VIEW */
         <div className="pt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-5">
           {displayedCertificates.map((cert) => {
-            const catStyle = CATEGORY_COLORS[cert.category] || CATEGORY_COLORS.Lainnya;
+            const catStyle = getCategoryTheme(cert.category, categoriesList);
             const isPdf = cert.mimeType === 'application/pdf';
 
             return (
@@ -470,34 +485,35 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                 id={`cert-card-${cert.id}`}
                 className="bg-white dark:bg-slate-850 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/50 hover:shadow-md dark:hover:shadow-indigo-950/30 transition-all flex flex-col justify-between overflow-hidden group"
               >
-                {/* Card Top Preview Bar */}
-                <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                      isPdf 
-                        ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/50' 
-                        : 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/50'
-                    }`}>
-                      {isPdf ? <FileText className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
-                    </div>
-                    <div className="min-w-0">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}>
-                        {cert.category}
-                      </span>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5 truncate">
-                        {cert.credentialId || 'No ID'}
-                      </p>
-                    </div>
+                {/* Visual Thumbnail Preview Header Banner */}
+                <div className="relative">
+                  <CertificateThumbnail 
+                    certificate={cert} 
+                    size="grid" 
+                    onClick={() => onSelectCertificate(cert)} 
+                    showHoverZoom={false}
+                    className="w-full cursor-pointer"
+                  />
+                  
+                  {/* Top Floating Badge Bar */}
+                  <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border shadow-xs ${catStyle.bg} ${catStyle.text} ${catStyle.border}`}>
+                      {cert.category}
+                    </span>
+                    <span className="text-[10px] text-slate-700 dark:text-slate-200 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs font-semibold px-2 py-0.5 rounded-md shadow-xs border border-slate-200/50 dark:border-slate-800">
+                      {formatBytes(cert.fileSize)}
+                    </span>
                   </div>
-
-                  <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0 font-semibold">
-                    {formatBytes(cert.fileSize)}
-                  </span>
                 </div>
 
                 {/* Card Body */}
                 <div className="p-5 space-y-3.5 flex-1 flex flex-col justify-between">
                   <div>
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500 font-mono mb-1">
+                      <span>ID: {cert.credentialId || 'Auto'}</span>
+                      <span className="uppercase font-bold">{isPdf ? 'PDF Dokumen' : 'Image'}</span>
+                    </div>
+
                     <h3 
                       onClick={() => onSelectCertificate(cert)}
                       className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-2 cursor-pointer leading-snug"
@@ -601,47 +617,62 @@ export const CertificateList: React.FC<CertificateListProps> = ({
       ) : (
         /* TABLE VIEW */
         <div className="pt-4 overflow-x-auto rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs">
-          <table className="w-full min-w-[1100px] text-left text-xs text-slate-600 dark:text-slate-300 border-collapse">
+          <table className="w-full min-w-[1180px] text-left text-xs text-slate-600 dark:text-slate-300 border-collapse">
             <thead className="bg-slate-50/90 dark:bg-slate-850/90 border-b border-slate-200/80 dark:border-slate-800">
               <tr className="text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider font-bold">
-                <th className="py-3.5 px-4 min-w-[280px]">Nama Sertifikat</th>
-                <th className="py-3.5 px-4 min-w-[190px]">Pemilik / Peserta</th>
+                <th className="py-3.5 px-4 w-[95px] min-w-[90px] text-center">Pratinjau</th>
+                <th className="py-3.5 px-4 min-w-[260px]">Nama Sertifikat</th>
+                <th className="py-3.5 px-4 min-w-[180px]">Pemilik / Peserta</th>
                 <th className="py-3.5 px-3 min-w-[110px]">Kategori</th>
-                <th className="py-3.5 px-4 min-w-[200px]">Lembaga Penerbit</th>
-                <th className="py-3.5 px-3 min-w-[120px] text-center">Tanggal Terbit</th>
-                <th className="py-3.5 px-4 min-w-[160px]">Masa Berlaku</th>
-                <th className="py-3.5 px-3 min-w-[140px] whitespace-nowrap">Format / Ukuran</th>
-                <th className="py-3.5 px-4 min-w-[190px] text-right whitespace-nowrap">Aksi</th>
+                <th className="py-3.5 px-4 min-w-[190px]">Lembaga Penerbit</th>
+                <th className="py-3.5 px-3 min-w-[115px] text-center">Tanggal Terbit</th>
+                <th className="py-3.5 px-4 min-w-[155px]">Masa Berlaku</th>
+                <th className="py-3.5 px-3 min-w-[130px] whitespace-nowrap">Format / Ukuran</th>
+                <th className="py-3.5 px-4 min-w-[180px] text-right whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {displayedCertificates.map((cert) => {
-                const catStyle = CATEGORY_COLORS[cert.category] || CATEGORY_COLORS.Lainnya;
+                const catStyle = getCategoryTheme(cert.category, categoriesList);
                 const isPdf = cert.mimeType === 'application/pdf';
 
                 return (
                   <tr key={cert.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                    {/* Thumbnail Preview Column with Hover Zoom */}
+                    <td className="py-3 px-4 text-center align-middle">
+                      <div className="flex items-center justify-center">
+                        <CertificateThumbnail 
+                          certificate={cert}
+                          size="table"
+                          onClick={() => onSelectCertificate(cert)}
+                          showHoverZoom={true}
+                        />
+                      </div>
+                    </td>
+
+                    {/* Certificate Title Column */}
                     <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white">
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2.5 rounded-xl shrink-0 ${
-                          isPdf 
-                            ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400' 
-                            : 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400'
-                        }`}>
-                          {isPdf ? <FileText className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
-                        </div>
-                        <div className="min-w-0">
-                          <p 
-                            onClick={() => onSelectCertificate(cert)}
-                            className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 font-bold text-slate-900 dark:text-slate-100 transition-colors leading-tight"
-                            title={cert.title}
-                          >
-                            {cert.title}
-                          </p>
-                          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{cert.credentialId}</p>
+                      <div className="min-w-0">
+                        <p 
+                          onClick={() => onSelectCertificate(cert)}
+                          className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 font-bold text-slate-900 dark:text-slate-100 transition-colors leading-tight text-sm line-clamp-2"
+                          title={cert.title}
+                        >
+                          {cert.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                            {cert.credentialId || 'Tanpa ID'}
+                          </span>
+                          {cert.tags && cert.tags.length > 0 && (
+                            <span className="text-[9px] px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded font-medium">
+                              #{cert.tags[0]}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>
+
                     <td className="py-4 px-4 font-medium text-slate-800 dark:text-slate-200">
                       <div className="flex items-center gap-2">
                         <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -656,7 +687,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                     <td className="py-4 px-4 text-slate-600 dark:text-slate-300">
                       <div className="flex items-center gap-1.5">
                         <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>{cert.issuer}</span>
+                        <span className="truncate max-w-[170px]">{cert.issuer}</span>
                       </div>
                     </td>
                     <td className="py-4 px-3 text-center whitespace-nowrap text-slate-600 dark:text-slate-300 font-mono text-[11px]">

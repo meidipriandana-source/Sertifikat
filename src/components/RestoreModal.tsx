@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, UploadCloud, RotateCcw, AlertTriangle, CheckCircle, 
   FileText, ArrowRight, HardDrive, Database, ShieldAlert, Sparkles,
@@ -33,8 +34,6 @@ export const RestoreModal: React.FC<RestoreModalProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [confirmStep, setConfirmStep] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  if (!isOpen) return null;
 
   const resetState = () => {
     setFile(null);
@@ -203,8 +202,22 @@ export const RestoreModal: React.FC<RestoreModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden my-6 transition-all">
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto"
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden my-6 transition-all"
+          >
         
         {/* Header */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850/50">
@@ -596,7 +609,9 @@ export const RestoreModal: React.FC<RestoreModalProps> = ({
           )}
         </div>
 
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

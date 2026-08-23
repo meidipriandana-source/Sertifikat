@@ -24,3 +24,48 @@
 .animate-led-blink {
   animation: ledBlink 1.1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* Print Media Styles */
+@media print {
+  @page {
+    size: auto;
+    margin: 10mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide screen-only interactive UI */
+  .no-print,
+  nav,
+  header,
+  aside,
+  button,
+  .fixed:not(#printable-certificate-root),
+  #modal-certificate-detail,
+  #modal-expiry-monitor,
+  #modal-export,
+  #modal-restore,
+  #modal-delete-confirm,
+  #modal-upload {
+    display: none !important;
+  }
+
+  /* Make print root visible and dominant */
+  .print-only,
+  #printable-certificate-root {
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    min-height: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+}
+

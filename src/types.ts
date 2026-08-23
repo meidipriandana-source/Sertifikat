@@ -1,4 +1,15 @@
-export type CertificateCategory = 'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya';
+export type CertificateCategory = string;
+
+export interface CategoryItem {
+  id: string;
+  name: string;
+  description?: string;
+  color: string; // e.g. 'indigo' | 'emerald' | 'amber' | 'blue' | 'purple' | 'rose' | 'teal' | 'cyan' | 'orange' | 'slate'
+  icon?: string; // e.g. 'Award' | 'GraduationCap' | 'BookOpen' | 'Briefcase' | 'Sparkles' | 'Shield' | 'Tag' | 'Stethoscope'
+  isDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Certificate {
   id: string;

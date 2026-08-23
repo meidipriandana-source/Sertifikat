@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  fetchCertificates, fetchStats, deleteCertificate 
+  fetchCertificates, fetchStats, deleteCertificate, fetchCategories, getLastCacheTimestamp 
 } from './services/api';
 import { 
   getStoredAuthState, GoogleAuthState 
 } from './services/googleAuth';
-import { Certificate, CertificateStats } from './types';
+import { Certificate, CertificateStats, CategoryItem } from './types';
 import { Header } from './components/Header';
 import { DashboardStats } from './components/DashboardStats';
 import { CertificateList } from './components/CertificateList';
@@ -18,13 +18,18 @@ import { RestoreModal } from './components/RestoreModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { ExpiryAlertBanner } from './components/ExpiryAlertBanner';
 import { ExpiryMonitorModal } from './components/ExpiryMonitorModal';
+import { CategoryManagerModal } from './components/CategoryManagerModal';
 import { getExpirySummary } from './utils/expiry';
-import { Cloud, CheckCircle2, AlertCircle, Sparkles, Folder, ExternalLink, BellRing } from 'lucide-react';
+import { Cloud, CheckCircle2, AlertCircle, Sparkles, Folder, ExternalLink, BellRing, WifiOff, RefreshCw, Database, Plus, X, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
 export default function App() {
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [stats, setStats] = useState<CertificateStats | null>(null);
+  const [categoriesList, setCategoriesList] = useState<CategoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isUsingCache, setIsUsingCache] = useState<boolean>(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => getLastCacheTimestamp());
 
   // Filters & Sorting
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,7 +50,32 @@ export default function App() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isRestoreOpen, setIsRestoreOpen] = useState(false);
   const [isExpiryMonitorOpen, setIsExpiryMonitorOpen] = useState(false);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [hasNotifiedExpiry, setHasNotifiedExpiry] = useState(false);
+  const [isCloudBannerDismissed, setIsCloudBannerDismissed] = useState<boolean>(() => {
+    return localStorage.getItem('certify_drive_cloud_banner_dismissed') === 'true';
+  });
+  const [isCloudBannerExpanded, setIsCloudBannerExpanded] = useState<boolean>(() => {
+    return localStorage.getItem('certify_drive_cloud_banner_expanded') === 'true';
+  });
+
+  const handleToggleExpandCloudBanner = () => {
+    setIsCloudBannerExpanded(prev => {
+      const next = !prev;
+      localStorage.setItem('certify_drive_cloud_banner_expanded', String(next));
+      return next;
+    });
+  };
+
+  const handleDismissCloudBanner = () => {
+    setIsCloudBannerDismissed(true);
+    localStorage.setItem('certify_drive_cloud_banner_dismissed', 'true');
+  };
+
+  const handleRestoreCloudBanner = () => {
+    setIsCloudBannerDismissed(false);
+    localStorage.removeItem('certify_drive_cloud_banner_dismissed');
+  };
 
   // Auth & Notifications
   const [authState, setAuthState] = useState<GoogleAuthState>(getStoredAuthState());
@@ -78,22 +108,38 @@ export default function App() {
     setTimeout(() => setToast(null), 3800);
   };
 
+  const loadCategories = useCallback(async () => {
+    try {
+      const cats = await fetchCategories();
+      setCategoriesList(cats);
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [certData, statsData] = await Promise.all([
+      const [certData, statsData, catsData] = await Promise.all([
         fetchCertificates({
           search: searchQuery,
           category: selectedCategory,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
+          expiryStatus: expiryFilter,
           sortBy,
           sortOrder
         }),
-        fetchStats()
+        fetchStats(),
+        fetchCategories().catch(() => [])
       ]);
       setCertificates(certData.data);
+      setIsUsingCache(Boolean(certData.fromCache));
+      setLastSyncedAt(getLastCacheTimestamp());
       setStats(statsData);
+      if (catsData && catsData.length > 0) {
+        setCategoriesList(catsData);
+      }
 
       // Check for certificates expiring within 30 days and alert the user once per session
       const summary = getExpirySummary(certData.data);
@@ -110,15 +156,38 @@ export default function App() {
 
     } catch (err: any) {
       console.error('Failed to load data:', err);
-      showToast('Gagal memuat data dari server.', 'error');
+      showToast('Gagal memuat data dari server. Membaca metadata dari cache lokal.', 'info');
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, selectedCategory, startDate, endDate, sortBy, sortOrder, hasNotifiedExpiry]);
+  }, [searchQuery, selectedCategory, startDate, endDate, expiryFilter, sortBy, sortOrder, hasNotifiedExpiry]);
+
+  // Online / Offline synchronization listener
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast('Koneksi internet terhubung kembali. Memperbarui data...', 'success');
+      loadData();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast('Koneksi internet terputus. Mode offline aktif (metadata dibaca dari cache localStorage).', 'info');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [loadData]);
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadCategories();
+  }, [loadData, loadCategories]);
 
   const handleUploadSuccess = (newCert: Certificate) => {
     showToast(`Sertifikat "${newCert.title}" berhasil disimpan!`, 'success');
@@ -200,16 +269,52 @@ export default function App() {
         onOpenExport={() => setIsExportOpen(true)}
         onOpenRestore={() => setIsRestoreOpen(true)}
         onOpenExpiryMonitor={() => setIsExpiryMonitorOpen(true)}
+        onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
         urgentExpiryCount={expirySummary.totalUrgent}
         onRefresh={loadData}
         isLoading={isLoading}
         isDarkMode={isDarkMode}
         onToggleDarkMode={handleToggleDarkMode}
+        isOnline={isOnline}
+        lastCacheTime={lastSyncedAt}
       />
 
       {/* Main Container */}
       <main className="flex-1 w-full max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 py-6 space-y-6">
         
+        {/* Offline Status & LocalStorage Cache Banner */}
+        {!isOnline && (
+          <div 
+            id="banner-offline-mode"
+            className="bg-amber-500/10 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/70 rounded-2xl p-4 sm:p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-900 dark:text-amber-200 shadow-xs animate-in fade-in duration-200"
+          >
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <p className="text-xs sm:text-sm font-bold flex items-center gap-2">
+                  <span>Mode Offline Aktif (Cache Metadata Lokal)</span>
+                  <span className="text-[10px] font-mono bg-amber-200/60 dark:bg-amber-900/60 text-amber-950 dark:text-amber-200 px-2 py-0.5 rounded-md font-semibold">
+                    {certificates.length} Sertifikat Tersedia
+                  </span>
+                </p>
+                <p className="text-[11px] text-amber-800 dark:text-amber-300/90 mt-0.5">
+                  Koneksi internet tidak terdeteksi. Seluruh data metadata sertifikat dimuat langsung dari cache localStorage. Anda tetap dapat mencari, memfilter, melihat detail, dan mencetak sertifikat.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={loadData}
+              className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shrink-0 transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5 self-end sm:self-auto"
+            >
+              <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>Coba Hubungkan Ulang</span>
+            </button>
+          </div>
+        )}
+
         {/* Expiry Warning Notification Banner (Always visible when certificates expire soon or expired) */}
         <ExpiryAlertBanner
           certificates={certificates}
@@ -222,41 +327,102 @@ export default function App() {
           onSelectCertificate={setSelectedCertificate}
         />
 
-        {/* Banner: Google Drive Cloud Auto-Storage Alert */}
-        <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 dark:from-slate-900 dark:via-indigo-950 dark:to-slate-900 rounded-3xl p-6 sm:p-7 text-white shadow-xl border border-indigo-800/40 dark:border-slate-800 relative overflow-hidden flex flex-col md:flex-row md:items-center md:justify-between gap-6 transition-all">
-          <div className="space-y-2 z-10 max-w-2xl">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
-              <Cloud className="w-3.5 h-3.5" />
-              <span>Google Drive API v3 Integrated</span>
+        {/* Banner: Google Drive Cloud Auto-Storage Alert (Compact & Collapsible) */}
+        {!isCloudBannerDismissed ? (
+          <div 
+            id="banner-cloud-storage-info"
+            className="bg-slate-900 dark:bg-slate-900/95 rounded-2xl border border-slate-800 text-white shadow-xs overflow-hidden transition-all duration-200"
+          >
+            {/* Slim Header Bar (Always visible, click to toggle) */}
+            <div className="px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 shrink-0">
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Google Drive Sync</span>
+                </span>
+                <p className="text-xs text-slate-300 truncate">
+                  <span className="font-semibold text-white hidden sm:inline">Penyimpanan Terpusat: </span>
+                  <span>Folder <strong className="text-white font-bold">📁 Sertifikat Digital</strong> terhubung otomatis</span>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsGuideOpen(true)}
+                  className="hidden md:inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 border border-white/10 transition-colors cursor-pointer"
+                >
+                  Panduan
+                </button>
+                <button
+                  type="button"
+                  onClick={handleToggleExpandCloudBanner}
+                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white transition-colors cursor-pointer flex items-center gap-1"
+                  title={isCloudBannerExpanded ? 'Sembunyikan rincian' : 'Lihat rincian lengkap'}
+                >
+                  <span>{isCloudBannerExpanded ? 'Ringkas' : 'Rincian'}</span>
+                  {isCloudBannerExpanded ? (
+                    <ChevronUp className="w-3.5 h-3.5 stroke-[2.5]" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5 stroke-[2.5]" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDismissCloudBanner}
+                  className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Sembunyikan banner ini"
+                  aria-label="Tutup banner"
+                >
+                  <X className="w-3.5 h-3.5 stroke-[2.5]" />
+                </button>
+              </div>
             </div>
-            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white">
-              Penyimpanan Sertifikat Digital Terdesentralisasi di Google Drive
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Semua file fisik (PDF/JPG/PNG) diunggah dan ditautkan ke Google Drive ke folder <span className="text-white font-semibold">📁 Sertifikat Digital</span>. Link Web View dan unduhan instan langsung siap diakses kapan saja.
-            </p>
-          </div>
 
-          <div className="flex items-center gap-2.5 z-10 shrink-0">
+            {/* Expanded Detailed Content (Collapsible) */}
+            {isCloudBannerExpanded && (
+              <div className="px-4 pb-3.5 pt-2 border-t border-slate-800 bg-slate-950/50 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-slate-300 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="space-y-1 max-w-2xl">
+                  <p className="leading-relaxed">
+                    Semua berkas fisik (PDF, JPG, PNG) otomatis diunggah dan disimpan ke folder terisolasi <span className="text-white font-bold">"Sertifikat Digital"</span> pada akun Google Drive Anda.
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    Kredensial dan metadata diindeks secara lokal untuk akses cepat, pencarian instan, dan pratinjau langsung tanpa membebani kuota penyimpanan lokal Anda.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsGuideOpen(true)}
+                    className="md:hidden px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                  >
+                    Panduan Setup
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsUploadOpen(true)}
+                    className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Unggah Berkas</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Minimalist Restore Trigger when dismissed */
+          <div className="flex justify-end -mb-2">
             <button
               type="button"
-              onClick={() => setIsGuideOpen(true)}
-              className="px-4 py-2.5 text-xs font-bold rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 backdrop-blur-xs transition-all cursor-pointer"
+              onClick={handleRestoreCloudBanner}
+              className="text-[11px] font-semibold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition-colors"
             >
-              Lihat Panduan Kode
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsUploadOpen(true)}
-              className="px-4 py-2.5 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-950/40 transition-all cursor-pointer"
-            >
-              + Unggah File Baru
+              <Cloud className="w-3 h-3" />
+              <span>Tampilkan Info Google Drive</span>
             </button>
           </div>
-
-          {/* Decorative background glow */}
-          <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
-        </div>
+        )}
 
         {/* Dashboard Metric Overview */}
         <DashboardStats
@@ -266,6 +432,9 @@ export default function App() {
           onSelectCategory={setSelectedCategory}
           onOpenExpiryMonitor={() => setIsExpiryMonitorOpen(true)}
           onFilterExpiring={() => setExpiryFilter('expiring_soon')}
+          categoriesList={categoriesList}
+          onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
+          onOpenUpload={() => setIsUploadOpen(true)}
         />
 
         {/* Certificate List (Grid & Table) */}
@@ -291,6 +460,8 @@ export default function App() {
           expiryFilter={expiryFilter}
           onExpiryFilterChange={setExpiryFilter}
           onOpenExpiryMonitor={() => setIsExpiryMonitorOpen(true)}
+          categoriesList={categoriesList}
+          onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
         />
 
       </main>
@@ -301,9 +472,16 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-800 dark:text-slate-200">Sistem Manajemen Sertifikat</span>
             <span>•</span>
-            <span>Google Drive API v3 &amp; Multer Backend</span>
+            <span>Google Drive Cloud Storage</span>
           </div>
           <div className="flex items-center gap-4 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setIsCategoryManagerOpen(true)}
+              className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+            >
+              Kelola Kategori
+            </button>
             <button
               type="button"
               onClick={() => setIsExpiryMonitorOpen(true)}
@@ -338,6 +516,8 @@ export default function App() {
         onBatchSuccess={handleBatchUploadSuccess}
         authState={authState}
         onOpenGoogleConnect={() => setIsGoogleConnectOpen(true)}
+        categoriesList={categoriesList}
+        onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
       />
 
       <CertificateDetailModal
@@ -345,6 +525,17 @@ export default function App() {
         onClose={() => setSelectedCertificate(null)}
         onUpdate={handleUpdateCertificate}
         onDelete={handleRequestDelete}
+        categoriesList={categoriesList}
+        isOnline={isOnline}
+      />
+
+      <CategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => setIsCategoryManagerOpen(false)}
+        onCategoriesChanged={() => {
+          loadCategories();
+          loadData();
+        }}
       />
 
       <DeleteConfirmModal

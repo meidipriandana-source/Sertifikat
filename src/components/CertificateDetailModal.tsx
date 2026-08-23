@@ -1,18 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, ExternalLink, Download, Copy, Check, Calendar, User, 
   Building2, HardDrive, FileText, Image as ImageIcon, QrCode, 
-  Edit3, Trash2, ShieldCheck, Tag, Link2, Save, Clock
+  Edit3, Trash2, ShieldCheck, Tag, Link2, Save, Clock, Printer, Database, WifiOff
 } from 'lucide-react';
-import { Certificate } from '../types';
+import { Certificate, CertificateCategory, CategoryItem } from '../types';
 import { updateCertificate } from '../services/api';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
+import { CertificateThumbnail } from './CertificateThumbnail';
+import { PrintCertificateModal } from './PrintCertificateModal';
+import { getCategoryTheme } from '../utils/categoryColors';
 
 interface CertificateDetailModalProps {
   certificate: Certificate | null;
   onClose: () => void;
   onUpdate: (updated: Certificate) => void;
   onDelete: (cert: Certificate) => void;
+  categoriesList?: CategoryItem[];
+  isOnline?: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -27,35 +33,55 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   certificate,
   onClose,
   onUpdate,
-  onDelete
+  onDelete,
+  categoriesList = [],
+  isOnline = true
 }) => {
-  if (!certificate) return null;
-
   const [isEditing, setIsEditing] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+
+  const availableCategories = categoriesList.length > 0
+    ? categoriesList.map(c => c.name)
+    : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
 
   // Edit states
-  const [editTitle, setEditTitle] = useState(certificate.title);
-  const [editRecipient, setEditRecipient] = useState(certificate.recipientName);
-  const [editIssuer, setEditIssuer] = useState(certificate.issuer);
-  const [editDate, setEditDate] = useState(certificate.issueDate);
-  const [editHasExpiryDate, setEditHasExpiryDate] = useState(Boolean(certificate.expiryDate && certificate.expiryDate.trim() !== ''));
-  const [editExpiryDate, setEditExpiryDate] = useState(certificate.expiryDate || '');
-  const [editCategory, setEditCategory] = useState(certificate.category);
-  const [editDescription, setEditDescription] = useState(certificate.description || '');
+  const [editTitle, setEditTitle] = useState(certificate?.title || '');
+  const [editRecipient, setEditRecipient] = useState(certificate?.recipientName || '');
+  const [editIssuer, setEditIssuer] = useState(certificate?.issuer || '');
+  const [editDate, setEditDate] = useState(certificate?.issueDate || '');
+  const [editHasExpiryDate, setEditHasExpiryDate] = useState(Boolean(certificate?.expiryDate && certificate.expiryDate.trim() !== ''));
+  const [editExpiryDate, setEditExpiryDate] = useState(certificate?.expiryDate || '');
+  const [editCategory, setEditCategory] = useState<CertificateCategory>(certificate?.category || 'Pelatihan');
+  const [editDescription, setEditDescription] = useState(certificate?.description || '');
 
-  const isPdf = certificate.mimeType === 'application/pdf';
+  useEffect(() => {
+    if (certificate) {
+      setEditTitle(certificate.title);
+      setEditRecipient(certificate.recipientName);
+      setEditIssuer(certificate.issuer);
+      setEditDate(certificate.issueDate);
+      setEditHasExpiryDate(Boolean(certificate.expiryDate && certificate.expiryDate.trim() !== ''));
+      setEditExpiryDate(certificate.expiryDate || '');
+      setEditCategory(certificate.category);
+      setEditDescription(certificate.description || '');
+      setIsEditing(false);
+    }
+  }, [certificate]);
+
+  const isPdf = certificate?.mimeType === 'application/pdf';
 
   const handleCopyLink = () => {
+    if (!certificate) return;
     navigator.clipboard.writeText(certificate.webViewLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
   const handleCopyId = () => {
-    if (certificate.credentialId) {
+    if (certificate?.credentialId) {
       navigator.clipboard.writeText(certificate.credentialId);
       setCopiedId(true);
       setTimeout(() => setCopiedId(false), 2000);
@@ -70,6 +96,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   };
 
   const handleSaveEdit = async () => {
+    if (!certificate) return;
     try {
       setIsSaving(true);
       const updated = await updateCertificate(certificate.id, {
@@ -91,12 +118,24 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors">
-      <div 
-        id="modal-certificate-detail"
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[90vh]"
-      >
-        {/* Modal Top Bar */}
+    <AnimatePresence>
+      {certificate && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            id="modal-certificate-detail"
+            className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[90vh]"
+          >
+            {/* Modal Top Bar */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850 shrink-0">
           <div className="flex items-center gap-3.5">
             <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-xs ${
@@ -107,9 +146,15 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
               {isPdf ? <FileText className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white truncate max-w-md sm:max-w-lg">
-                {certificate.title}
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-900 dark:text-white truncate max-w-md sm:max-w-lg">
+                  {certificate.title}
+                </h2>
+                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                  <Database className="w-2.5 h-2.5" />
+                  <span>Cache Tersimpan</span>
+                </span>
+              </div>
               <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
                 <span>Google Drive File ID:</span>
                 <code className="font-mono text-[11px] bg-slate-200/70 dark:bg-slate-800 px-2 py-0.5 rounded-lg text-slate-700 dark:text-slate-300">
@@ -120,6 +165,17 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              id="btn-print-certificate-top"
+              type="button"
+              onClick={() => setIsPrintModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 transition-all cursor-pointer shadow-2xs"
+              title="Cetak Sertifikat / Simpan PDF"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cetak Sertifikat</span>
+            </button>
+
             <button
               id="btn-toggle-edit"
               type="button"
@@ -153,15 +209,19 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
           <div className="lg:col-span-7 space-y-4">
             
             {/* Visual File Preview Box */}
-            <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-900/5 dark:bg-slate-800/40 aspect-4/3 flex flex-col items-center justify-center p-6 text-center relative group shadow-2xs">
-              <div className="space-y-3">
-                <div className={`w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-xs ${
-                  isPdf 
-                    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400' 
-                    : 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400'
-                }`}>
-                  {isPdf ? <FileText className="w-8 h-8" /> : <ImageIcon className="w-8 h-8" />}
-                </div>
+            <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-900/5 dark:bg-slate-850 flex flex-col p-4 relative group shadow-2xs">
+              
+              {/* Document Visual Render */}
+              <div className="w-full mb-3 rounded-xl overflow-hidden border border-slate-200/80 dark:border-slate-750 shadow-xs">
+                <CertificateThumbnail 
+                  certificate={certificate} 
+                  size="large" 
+                  showHoverZoom={false}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="space-y-2 text-center">
                 <div>
                   <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{certificate.fileName}</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
@@ -170,15 +230,24 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                 </div>
                 
                 {/* Embedded Actions */}
-                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsPrintModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all shadow-xs cursor-pointer active:scale-95"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Cetak Versi Dokumen</span>
+                  </button>
+
                   <a
                     href={certificate.webViewLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-md shadow-indigo-100 dark:shadow-indigo-950/50 active:scale-95"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-md shadow-indigo-100 dark:shadow-indigo-950/50 active:scale-95"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Buka File di Google Drive</span>
+                    <span>Buka di Google Drive</span>
                   </a>
 
                   {certificate.webContentLink && (
@@ -186,7 +255,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       href={certificate.webContentLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-xs"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-xs"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>Unduh File</span>
@@ -290,16 +359,12 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wider text-[10px]">Kategori</label>
                     <select
                       value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value as any)}
+                      onChange={(e) => setEditCategory(e.target.value)}
                       className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer font-medium"
                     >
-                      <option value="Prestasi">Prestasi</option>
-                      <option value="Pelatihan">Pelatihan</option>
-                      <option value="Workshop">Workshop</option>
-                      <option value="Akademik">Akademik</option>
-                      <option value="Penghargaan">Penghargaan</option>
-                      <option value="Kelulusan">Kelulusan</option>
-                      <option value="Lainnya">Lainnya</option>
+                      {availableCategories.map(catName => (
+                        <option key={catName} value={catName}>{catName}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -444,9 +509,16 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                         Kategori
                       </span>
-                      <p className="font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">
-                        {certificate.category}
-                      </p>
+                      <div className="mt-0.5">
+                        {(() => {
+                          const catTheme = getCategoryTheme(certificate.category, categoriesList);
+                          return (
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-bold border ${catTheme.bg} ${catTheme.text} ${catTheme.border}`}>
+                              {certificate.category}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -520,7 +592,16 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
 
         </div>
 
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Print Certificate Modal */}
+      <PrintCertificateModal 
+        certificate={certificate}
+        isOpen={isPrintModalOpen}
+        onClose={() => setIsPrintModalOpen(false)}
+      />
+    </AnimatePresence>
   );
 };

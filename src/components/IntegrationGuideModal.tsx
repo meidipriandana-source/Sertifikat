@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, BookOpen, Terminal, FolderTree, Server, Layout, 
   KeyRound, ShieldCheck, Copy, Check, ExternalLink, FileCode, CheckCircle2
@@ -15,8 +16,6 @@ export const IntegrationGuideModal: React.FC<IntegrationGuideModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'console' | 'structure' | 'backend' | 'frontend' | 'security'>('console');
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
-
-  if (!isOpen) return null;
 
   const handleCopy = (text: string, sectionId: string) => {
     navigator.clipboard.writeText(text);
@@ -211,11 +210,23 @@ app.listen(3000, () => console.log('Server berjalan di port 3000'));`;
 </html>`;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors">
-      <div 
-        id="modal-integration-guide"
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[90vh]"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            id="modal-integration-guide"
+            className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[90vh]"
+          >
         {/* Top Header */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-850 shrink-0">
           <div className="flex items-center gap-3.5">
@@ -470,7 +481,7 @@ app.listen(3000, () => console.log('Server berjalan di port 3000'));`;
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 flex items-center justify-between shrink-0">
           <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            Sistem Manajemen Sertifikat Digital • Powered by Google Drive API v3
+            Sistem Manajemen Sertifikat Digital • Diklat RSUD dr. H. Jusuf SK
           </p>
           <button
             type="button"
@@ -481,7 +492,9 @@ app.listen(3000, () => console.log('Server berjalan di port 3000'));`;
           </button>
         </div>
 
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

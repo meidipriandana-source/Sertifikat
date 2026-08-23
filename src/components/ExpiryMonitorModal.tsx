@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, BellRing, Clock, AlertTriangle, CheckCircle2, ShieldAlert,
   Search, ExternalLink, Calendar, User, Building2, Download,
@@ -24,8 +25,6 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
   const [activeTab, setActiveTab] = useState<'all' | 'expiring_soon' | 'expired' | 'valid'>('expiring_soon');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedSummary, setCopiedSummary] = useState(false);
-
-  if (!isOpen) return null;
 
   const summary = getExpirySummary(certificates);
 
@@ -125,11 +124,23 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors">
-      <div 
-        id="modal-expiry-monitor"
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[92vh] my-4"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            id="modal-expiry-monitor"
+            className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[92vh] my-4"
+          >
         {/* Top Header */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-amber-50/70 via-slate-50/70 to-slate-50/70 dark:from-amber-950/40 dark:via-slate-850 dark:to-slate-850 shrink-0">
           <div className="flex items-center gap-3.5">
@@ -417,8 +428,9 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
             Tutup Pemantau
           </button>
         </div>
-
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

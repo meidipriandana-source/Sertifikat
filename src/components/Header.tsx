@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cloud, HardDrive, Plus, BookOpen, Download, RefreshCw, CheckCircle2, ShieldCheck, Moon, Sun, RotateCcw, Bell } from 'lucide-react';
+import { Cloud, HardDrive, Plus, BookOpen, Download, RefreshCw, CheckCircle2, ShieldCheck, Moon, Sun, RotateCcw, Bell, FolderTree, Wifi, WifiOff, Database } from 'lucide-react';
 import { GoogleAuthState } from '../services/googleAuth';
 
 interface HeaderProps {
@@ -10,11 +10,14 @@ interface HeaderProps {
   onOpenExport: () => void;
   onOpenRestore: () => void;
   onOpenExpiryMonitor: () => void;
+  onOpenCategoryManager?: () => void;
   urgentExpiryCount: number;
   onRefresh: () => void;
   isLoading: boolean;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
+  isOnline?: boolean;
+  lastCacheTime?: string | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,11 +28,14 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenExport,
   onOpenRestore,
   onOpenExpiryMonitor,
+  onOpenCategoryManager,
   urgentExpiryCount,
   onRefresh,
   isLoading,
   isDarkMode,
-  onToggleDarkMode
+  onToggleDarkMode,
+  isOnline = true,
+  lastCacheTime
 }) => {
 
   return (
@@ -43,9 +49,6 @@ export const Header: React.FC<HeaderProps> = ({
               <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
                 Sertifikat Diklat RSUD dr.H.Jusuf.SK
               </h1>
-              <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/60">
-                Drive API v3
-              </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
               <span>Sistem Manajemen Sertifikat Digital</span>
@@ -57,6 +60,27 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Action Bar & User Profile / Status */}
           <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
             
+            {/* Connection / LocalStorage Cache Status Indicator */}
+            {!isOnline ? (
+              <div 
+                id="badge-offline-cache"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/10 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/80 shadow-2xs"
+                title="Koneksi internet terputus. Metadata sertifikat dibaca langsung dari cache localStorage."
+              >
+                <WifiOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>Mode Offline (Cache)</span>
+              </div>
+            ) : (
+              <div 
+                id="badge-online-cache"
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-slate-100/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shadow-2xs"
+                title={lastCacheTime ? `Cache metadata lokal tersinkronisasi (${new Date(lastCacheTime).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })})` : 'Cache metadata lokal aktif'}
+              >
+                <Database className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Cache Tersinkron</span>
+              </div>
+            )}
+
             {/* Google Drive Status Button */}
             <button
               id="btn-google-drive-status"
@@ -156,6 +180,20 @@ export const Header: React.FC<HeaderProps> = ({
               <RotateCcw className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
               <span className="hidden sm:inline">Pulihkan Data</span>
             </button>
+
+            {/* Category Management Button */}
+            {onOpenCategoryManager && (
+              <button
+                id="btn-open-category-manager"
+                onClick={onOpenCategoryManager}
+                type="button"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 transition-colors shadow-2xs cursor-pointer"
+                title="Kelola Kategori Sertifikat (Tambah, Edit, Hapus)"
+              >
+                <FolderTree className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span className="hidden md:inline">Kategori</span>
+              </button>
+            )}
 
             {/* Developer Guide Button */}
             <button

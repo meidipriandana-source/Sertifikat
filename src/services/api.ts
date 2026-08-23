@@ -1,8 +1,45 @@
-import { Certificate, CertificateStats, CertificateCategory } from '../types';
+import { Certificate, CertificateStats, CertificateCategory, CategoryItem } from '../types';
 import { getStoredAuthState } from './googleAuth';
 
 const API_BASE = '/api';
-const LOCAL_STORAGE_KEY = 'certify_drive_certificates_local';
+export const LOCAL_STORAGE_KEY = 'certify_drive_certificates_local';
+export const CATEGORIES_STORAGE_KEY = 'certify_drive_categories_local';
+export const STATS_STORAGE_KEY = 'certify_drive_stats_local';
+export const CACHE_TIMESTAMP_KEY = 'certify_drive_last_synced_at';
+
+export interface CacheSyncInfo {
+  totalCached: number;
+  lastSyncedAt: string | null;
+  isOnline: boolean;
+}
+
+export function getLastCacheTimestamp(): string | null {
+  try {
+    return localStorage.getItem(CACHE_TIMESTAMP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function getOfflineCacheInfo(): CacheSyncInfo {
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  const list = getLocalCertificates();
+  return {
+    totalCached: list.length,
+    lastSyncedAt: getLastCacheTimestamp(),
+    isOnline
+  };
+}
+
+const DEFAULT_CATEGORIES: CategoryItem[] = [
+  { id: 'cat-prestasi', name: 'Prestasi', description: 'Penghargaan, kejuaraan, dan capaian kompetisi', color: 'amber', icon: 'Award', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-pelatihan', name: 'Pelatihan', description: 'Pelatihan profesi, diklat teknis, dan sertifikasi keahlian', color: 'indigo', icon: 'Briefcase', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-workshop', name: 'Workshop', description: 'Workshop, seminar ilmiah, webinar, dan simposium', color: 'emerald', icon: 'Sparkles', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-akademik', name: 'Akademik', description: 'Ijazah formal, diploma, transkrip, dan program sarjana', color: 'blue', icon: 'GraduationCap', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-penghargaan', name: 'Penghargaan', description: 'Tanda kehormatan, apresiasi pengabdian, dan penghargaan khusus', color: 'purple', icon: 'Shield', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-kelulusan', name: 'Kelulusan', description: 'Surat tanda tamat pendidikan, kelulusan ujian, dan lisensi', color: 'teal', icon: 'FileCheck', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-lainnya', name: 'Lainnya', description: 'Kategori umum dan dokumen sertifikat lainnya', color: 'slate', icon: 'Tag', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+];
 
 // Initial local seed data in case backend server is unreachable (e.g. Vercel static deployment)
 const nowMs = Date.now();
@@ -95,24 +132,40 @@ const DEFAULT_LOCAL_SEEDS: Certificate[] = [
   }
 ];
 
-function getLocalCertificates(): Certificate[] {
+export function getLocalCertificates(): Certificate[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(DEFAULT_LOCAL_SEEDS));
+      localStorage.setItem(CACHE_TIMESTAMP_KEY, new Date().toISOString());
       return DEFAULT_LOCAL_SEEDS;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : DEFAULT_LOCAL_SEEDS;
   } catch {
     return DEFAULT_LOCAL_SEEDS;
   }
 }
 
-function saveLocalCertificates(list: Certificate[]): void {
+export function saveLocalCertificates(list: Certificate[]): void {
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+    localStorage.setItem(CACHE_TIMESTAMP_KEY, new Date().toISOString());
   } catch (err) {
     console.error('Failed to save to localStorage:', err);
+  }
+}
+
+export function mergeIntoLocalCertificates(freshItems: Certificate[]): void {
+  try {
+    const current = getLocalCertificates();
+    const map = new Map<string, Certificate>();
+    current.forEach(c => map.set(c.id, c));
+    freshItems.forEach(c => map.set(c.id, c));
+    const merged = Array.from(map.values());
+    saveLocalCertificates(merged);
+  } catch (err) {
+    console.error('Failed to merge items into localStorage cache:', err);
   }
 }
 
@@ -137,30 +190,47 @@ export async function fetchCertificates(params?: {
   expiryStatus?: string;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
-}): Promise<{ total: number; data: Certificate[] }> {
-  try {
-    const query = new URLSearchParams();
-    if (params?.search) query.append('search', params.search);
-    if (params?.category) query.append('category', params.category);
-    if (params?.startDate) query.append('startDate', params.startDate);
-    if (params?.endDate) query.append('endDate', params.endDate);
-    if (params?.expiryStatus) query.append('expiryStatus', params.expiryStatus);
-    if (params?.sortBy) query.append('sortBy', params.sortBy);
-    if (params?.sortOrder) query.append('sortOrder', params.sortOrder);
+}): Promise<{ total: number; data: Certificate[]; fromCache?: boolean }> {
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-    const res = await fetch(`${API_BASE}/certificates?${query.toString()}`);
-    const { isJson, data } = await safeFetchJson(res);
+  if (isOnline) {
+    try {
+      const query = new URLSearchParams();
+      if (params?.search) query.append('search', params.search);
+      if (params?.category) query.append('category', params.category);
+      if (params?.startDate) query.append('startDate', params.startDate);
+      if (params?.endDate) query.append('endDate', params.endDate);
+      if (params?.expiryStatus) query.append('expiryStatus', params.expiryStatus);
+      if (params?.sortBy) query.append('sortBy', params.sortBy);
+      if (params?.sortOrder) query.append('sortOrder', params.sortOrder);
 
-    if (res.ok && isJson && data?.data) {
-      // Sync to local storage as cache
-      saveLocalCertificates(data.data);
-      return data;
+      const res = await fetch(`${API_BASE}/certificates?${query.toString()}`);
+      const { isJson, data } = await safeFetchJson(res);
+
+      if (res.ok && isJson && data?.data) {
+        // Sync to local storage as metadata cache
+        const hasFilters = Boolean(
+          params?.search || 
+          (params?.category && params.category !== 'Semua') || 
+          params?.startDate || 
+          params?.endDate || 
+          (params?.expiryStatus && params.expiryStatus !== 'all')
+        );
+
+        if (!hasFilters) {
+          saveLocalCertificates(data.data);
+        } else {
+          mergeIntoLocalCertificates(data.data);
+        }
+
+        return { ...data, fromCache: false };
+      }
+    } catch (netErr) {
+      console.warn('Backend API unreachable or offline, using metadata from localStorage cache:', netErr);
     }
-  } catch (netErr) {
-    console.warn('Backend API unavailable, using local client storage fallback:', netErr);
   }
 
-  // Client-side fallback for static deployments (like Vercel SPA)
+  // Offline / Cache fallback: Filter and sort directly from local storage metadata
   let list = getLocalCertificates();
 
   if (params?.category && params.category !== 'Semua') {
@@ -173,7 +243,9 @@ export async function fetchCertificates(params?: {
       c.title.toLowerCase().includes(q) ||
       c.recipientName.toLowerCase().includes(q) ||
       c.issuer.toLowerCase().includes(q) ||
-      (c.credentialId || '').toLowerCase().includes(q)
+      (c.credentialId || '').toLowerCase().includes(q) ||
+      (c.description || '').toLowerCase().includes(q) ||
+      (c.tags && c.tags.some(t => t.toLowerCase().includes(q)))
     );
   }
 
@@ -182,6 +254,24 @@ export async function fetchCertificates(params?: {
   }
   if (params?.endDate) {
     list = list.filter(c => c.issueDate <= params.endDate!);
+  }
+
+  if (params?.expiryStatus && params.expiryStatus !== 'all') {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    
+    list = list.filter(c => {
+      if (!c.expiryDate || c.expiryDate.trim() === '') {
+        return params.expiryStatus === 'lifetime';
+      }
+      const expDate = new Date(c.expiryDate).getTime();
+      const diffDays = Math.round((expDate - today) / (1000 * 60 * 60 * 24));
+      
+      if (params.expiryStatus === 'expired') return diffDays < 0;
+      if (params.expiryStatus === 'expiring_soon') return diffDays >= 0 && diffDays <= 30;
+      if (params.expiryStatus === 'valid') return diffDays > 30;
+      return true;
+    });
   }
 
   const sortBy = params?.sortBy || 'createdAt';
@@ -195,23 +285,29 @@ export async function fetchCertificates(params?: {
     return 0;
   });
 
-  return { total: list.length, data: list };
+  return { total: list.length, data: list, fromCache: true };
 }
 
 export async function fetchCertificateById(id: string): Promise<Certificate> {
-  try {
-    const res = await fetch(`${API_BASE}/certificates/${id}`);
-    const { isJson, data } = await safeFetchJson(res);
-    if (res.ok && isJson && data?.data) {
-      return data.data;
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+  if (isOnline) {
+    try {
+      const res = await fetch(`${API_BASE}/certificates/${id}`);
+      const { isJson, data } = await safeFetchJson(res);
+      if (res.ok && isJson && data?.data) {
+        mergeIntoLocalCertificates([data.data]);
+        return data.data;
+      }
+    } catch (err) {
+      console.warn('Backend unavailable, retrieving certificate metadata from localStorage cache:', err);
     }
-  } catch (err) {
-    console.warn('Backend unavailable, searching local:', err);
   }
 
+  // Retrieve certificate metadata from localStorage cache
   const list = getLocalCertificates();
-  const item = list.find(c => c.id === id);
-  if (!item) throw new Error('Sertifikat tidak ditemukan.');
+  const item = list.find(c => c.id === id || c.credentialId === id);
+  if (!item) throw new Error('Sertifikat tidak ditemukan di cache lokal.');
   return item;
 }
 
@@ -503,7 +599,9 @@ export interface ScannedCertificateResult {
   issueDate: string;
   expiryDate?: string;
   category: CertificateCategory;
+  suggestedTags?: string[];
   credentialId?: string;
+  extractedTextSummary?: string;
   source: 'ai_vision' | 'filename_heuristic';
 }
 
@@ -533,10 +631,73 @@ export async function scanCertificateFile(file: File): Promise<ScannedCertificat
     fileName: file.name,
     recipientName: parsed.recipientName,
     title: parsed.title,
-    issuer: 'Penyelenggara Diklat Resmi',
+    issuer: 'Diklat RSUD dr. H. Jusuf SK',
     issueDate: new Date().toISOString().split('T')[0],
     category: parsed.category,
+    suggestedTags: [parsed.category, 'Diklat RSUD'],
     source: 'filename_heuristic'
+  };
+}
+
+/**
+ * Suggest category and tags on-the-fly using Gemini AI
+ */
+export async function suggestCategoryAndTags(params: {
+  title?: string;
+  issuer?: string;
+  recipientName?: string;
+  description?: string;
+  currentCategory?: string;
+}): Promise<{
+  category: CertificateCategory;
+  suggestedTags: string[];
+  summary?: string;
+  source: 'ai_gemini' | 'heuristic';
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/certificates/suggest-tags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params)
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.success) {
+      return {
+        category: data.category || params.currentCategory || 'Pelatihan',
+        suggestedTags: data.suggestedTags || ['Pelatihan'],
+        summary: data.summary,
+        source: data.source || 'ai_gemini'
+      };
+    }
+  } catch (err) {
+    console.warn('Failed to call suggest-tags API, using heuristic fallback:', err);
+  }
+
+  // Client heuristic fallback
+  const text = `${params.title || ''} ${params.recipientName || ''}`.toLowerCase();
+  const tags: string[] = [];
+  let category: CertificateCategory = (params.currentCategory as CertificateCategory) || 'Pelatihan';
+
+  if (text.includes('prestasi') || text.includes('juara') || text.includes('lomba')) category = 'Prestasi';
+  else if (text.includes('workshop') || text.includes('seminar') || text.includes('webinar') || text.includes('simrs')) category = 'Workshop';
+  else if (text.includes('lulus') || text.includes('kelulusan')) category = 'Kelulusan';
+  else if (text.includes('akademik') || text.includes('ijazah')) category = 'Akademik';
+  else if (text.includes('penghargaan') || text.includes('award')) category = 'Penghargaan';
+
+  tags.push(category);
+  if (/bhd/i.test(text)) tags.push('BHD', 'Resusitasi Jantung');
+  if (/btcls/i.test(text)) tags.push('BTCLS', 'Gawat Darurat');
+  if (/simrs|rme/i.test(text)) tags.push('SIMRS', 'Rekam Medis');
+  if (/bedah|hipkabi/i.test(text)) tags.push('Kamar Bedah', 'Bedah');
+  if (/kemenkes/i.test(text)) tags.push('Kemenkes RI');
+  if (/ppni/i.test(text)) tags.push('SKP PPNI');
+  if (tags.length === 1) tags.push('Diklat RSUD');
+
+  return {
+    category,
+    suggestedTags: Array.from(new Set(tags)).slice(0, 5),
+    source: 'heuristic'
   };
 }
 
@@ -575,6 +736,68 @@ export async function scanBatchCertificateFiles(
   return results;
 }
 
+// Smart formatting for person names (strips prefix keywords, converts underscores, handles degrees & initials)
+export function cleanAndFormatPersonName(raw: string): string {
+  if (!raw) return '';
+  let str = raw.trim();
+
+  // Strip file extension
+  str = str.replace(/\.[^/.]+$/, '');
+  // Strip leading numbers like "01. ", "1 - ", "12_"
+  str = str.replace(/^[0-9]+[\.\-\_\s]+/, '');
+
+  // Strip common prefix keywords like "Sertifikat_", "Sertifikat ", "Certificate_", "Pelatihan_", "Diklat_", "BHD_"
+  str = str.replace(/^(sertifikat|certificate|pelatihan|diklat|piagam|seminar|workshop|webinar)[\_\s\-\–\|]+/i, '');
+
+  // Convert underscores and dashes to space
+  str = str.replace(/[_\-]+/g, ' ').trim();
+
+  // Tokenize and format
+  const words = str.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return raw;
+
+  const formattedWords = words.map((w) => {
+    const lower = w.toLowerCase();
+    if (/^dr\.?$/i.test(w)) return 'dr.';
+    if (/^drg\.?$/i.test(w)) return 'drg.';
+    if (/^ns\.?$/i.test(w)) return 'Ns.';
+    if (/^prof\.?$/i.test(w)) return 'Prof.';
+    if (/^apt\.?$/i.test(w)) return 'Apt.';
+    if (/^ners\.?$/i.test(w)) return 'Ners';
+    if (/^sp\.?[a-z]{1,4}$/i.test(w)) {
+      return w.replace(/^sp\.?/i, 'Sp.').toUpperCase();
+    }
+    if (/^(s\.kep|m\.kes|mars|skm|s\.kom|s\.t|s\.pd|s\.si|s\.e|m\.pd|s\.ked|m\.m|m\.si)$/i.test(lower)) {
+      return w.toUpperCase();
+    }
+    // Single letter initial (e.g. "S", "A", "P", "J")
+    if (w.length === 1 && /^[a-zA-Z]$/.test(w)) {
+      return w.toUpperCase() + '.';
+    }
+    // Standard word capitalization
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  });
+
+  let result = formattedWords.join(' ');
+
+  // Group single letter initials: e.g. "Tri Mulyani S. A. P." -> "Tri Mulyani, S.A.P."
+  result = result.replace(/\s+([A-Z]\.)(?:\s+([A-Z]\.))+/g, (match) => {
+    const letters = match.trim().replace(/\s+/g, '');
+    return ', ' + letters;
+  });
+  // Single initial at end: e.g. "Salim J." -> "Salim, J."
+  result = result.replace(/\s+([A-Z]\.)$/, ', $1');
+  // Specialist degree at end: e.g. "Ngo Sp.KGA" -> "Ngo, Sp.KGA"
+  result = result.replace(/\s+(Sp\.[A-Z]+)/i, ', $1');
+  result = result.replace(/\s+(MDSc|MARS|SKM|S\.Kep|M\.Kes)/i, ', $1');
+
+  // Clean double commas
+  result = result.replace(/,\s*,/g, ',').trim();
+  result = result.replace(/^,\s*/, '').trim();
+
+  return result || raw;
+}
+
 // Helper to intelligently split item/file string into title, recipient name, and category
 export function parseCertificateItemInfo(
   rawName: string, 
@@ -587,49 +810,59 @@ export function parseCertificateItemInfo(
   let title = fallbackTitle;
   let recipient = fallbackRecipient;
 
-  // Patterns for titles / degrees: dr., drg., Ns., Prof., Apt., Sp.A, Sp.PD, Sp.An, S.Kep, M.Kes, etc.
-  const personTitleRegex = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|s\.pd|s\.si|s\.e|ners)/i;
-
-  // Pattern 1: Delimiters like " - ", " – ", " | ", or "_"
-  if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ') || clean.includes('_')) {
-    const delimiter = clean.includes(' - ') ? ' - ' : clean.includes(' – ') ? ' – ' : clean.includes(' | ') ? ' | ' : '_';
+  // Pattern A: Check if the filename starts with "Sertifikat_" or "Sertifikat " followed by a person's name
+  // e.g. "Sertifikat_Tri_Mulyani_S_A_P.png", "Sertifikat_Sutarno.png", "Sertifikat_Siti_aminah.png"
+  if (/^(sertifikat|certificate|piagam)[\_\s\-\–\|]+/i.test(clean)) {
+    const rest = clean.replace(/^(sertifikat|certificate|piagam)[\_\s\-\–\|]+/i, '').trim();
+    // Check if the rest contains another delimiter for title - person
+    if (rest.includes(' - ') || rest.includes(' – ') || rest.includes(' | ')) {
+      const parts = rest.split(/[\-\–\|]+/).map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        title = fallbackTitle !== 'Sertifikat Pelatihan' ? fallbackTitle : `Sertifikat ${parts[0]}`;
+        recipient = cleanAndFormatPersonName(parts[1]);
+      } else {
+        recipient = cleanAndFormatPersonName(rest);
+      }
+    } else {
+      // The rest is directly the recipient name
+      recipient = cleanAndFormatPersonName(rest);
+    }
+  } else if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ')) {
+    const delimiter = clean.includes(' - ') ? ' - ' : clean.includes(' – ') ? ' – ' : ' | ';
     const parts = clean.split(delimiter).map(p => p.trim()).filter(Boolean);
 
     if (parts.length >= 2) {
+      const personTitleRegex = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|s\.pd|s\.si|s\.e|ners)/i;
       const isPart0Person = personTitleRegex.test(parts[0]);
       const isPart1Person = personTitleRegex.test(parts[1]);
 
       if (isPart0Person && !isPart1Person) {
-        recipient = parts[0];
+        recipient = cleanAndFormatPersonName(parts[0]);
         title = parts.slice(1).join(' - ');
       } else if (isPart1Person && !isPart0Person) {
         title = parts[0];
-        recipient = parts.slice(1).join(' - ');
+        recipient = cleanAndFormatPersonName(parts.slice(1).join(' - '));
       } else {
-        const isPart0Title = /(sertifikat|pelatihan|workshop|seminar|diklat|kursus|bimtek|lomba|juara)/i.test(parts[0]);
+        const isPart0Title = /(sertifikat|pelatihan|workshop|seminar|diklat|kursus|bimtek|lomba|juara|bhd)/i.test(parts[0]);
         if (isPart0Title) {
           title = parts[0];
-          recipient = parts.slice(1).join(' - ');
+          recipient = cleanAndFormatPersonName(parts.slice(1).join(' - '));
         } else {
-          recipient = parts[0];
+          recipient = cleanAndFormatPersonName(parts[0]);
           title = parts.slice(1).join(' - ');
         }
       }
     }
-  } else if (clean.toLowerCase().startsWith('sertifikat ') || clean.toLowerCase().startsWith('pelatihan ') || clean.toLowerCase().startsWith('workshop ')) {
-    title = clean;
-    const nameMatch = clean.match(/(?:untuk|kepada|atas nama|an\.)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})/);
-    if (nameMatch) {
-      recipient = nameMatch[1];
-    }
   } else {
-    // If it looks like a person's name
-    recipient = clean;
+    // Single name format
+    recipient = cleanAndFormatPersonName(clean);
   }
 
-  // Clean formatting
-  recipient = recipient.replace(/_/g, ' ').trim();
+  // Format title
   title = title.replace(/_/g, ' ').trim();
+  if (title.toLowerCase() === 'sertifikat') {
+    title = fallbackTitle;
+  }
 
   // Determine category
   const lower = (title + ' ' + rawName).toLowerCase();
@@ -889,4 +1122,241 @@ export async function syncGoogleDriveFolder(
     folderId,
     data: updatedRecords
   };
+}
+
+// ----------------------------------------------------
+// CATEGORY MANAGEMENT API & LOCAL HELPERS
+// ----------------------------------------------------
+
+export function getLocalCategories(): CategoryItem[] {
+  try {
+    const raw = localStorage.getItem(CATEGORIES_STORAGE_KEY);
+    if (!raw) {
+      localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(DEFAULT_CATEGORIES));
+      return DEFAULT_CATEGORIES;
+    }
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+    return DEFAULT_CATEGORIES;
+  } catch {
+    return DEFAULT_CATEGORIES;
+  }
+}
+
+export function saveLocalCategories(categories: CategoryItem[]): void {
+  try {
+    localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(categories));
+  } catch (err) {
+    console.error('Failed to save categories to localStorage:', err);
+  }
+}
+
+export async function fetchCategories(): Promise<CategoryItem[]> {
+  try {
+    const res = await fetch(`${API_BASE}/categories`);
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && Array.isArray(data?.data)) {
+      saveLocalCategories(data.data);
+      return data.data;
+    }
+  } catch (err) {
+    console.warn('Backend categories unavailable, using local client storage:', err);
+  }
+
+  // Local fallback: count usage from local certificates
+  const localCats = getLocalCategories();
+  const certs = getLocalCertificates();
+  const counts: Record<string, number> = {};
+  certs.forEach(c => {
+    counts[c.category] = (counts[c.category] || 0) + 1;
+  });
+
+  return localCats.map(cat => ({
+    ...cat,
+    usageCount: counts[cat.name] || 0
+  }));
+}
+
+export async function createCategory(newCat: {
+  name: string;
+  description?: string;
+  color?: string;
+  icon?: string;
+}): Promise<CategoryItem> {
+  try {
+    const res = await fetch(`${API_BASE}/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newCat)
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.data) {
+      const current = getLocalCategories();
+      const updated = [...current, data.data];
+      saveLocalCategories(updated);
+      return data.data;
+    } else if (data?.message) {
+      throw new Error(data.message);
+    }
+  } catch (err: any) {
+    if (err.message && !err.message.includes('fetch')) {
+      throw err;
+    }
+    console.warn('Backend createCategory unavailable, saving to client storage:', err);
+  }
+
+  // Client-side fallback
+  const current = getLocalCategories();
+  const exists = current.some(c => c.name.toLowerCase() === newCat.name.toLowerCase().trim());
+  if (exists) {
+    throw new Error(`Kategori "${newCat.name.trim()}" sudah ada.`);
+  }
+
+  const created: CategoryItem = {
+    id: `cat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    name: newCat.name.trim(),
+    description: newCat.description?.trim(),
+    color: newCat.color || 'indigo',
+    icon: newCat.icon || 'Award',
+    isDefault: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  current.push(created);
+  saveLocalCategories(current);
+  return created;
+}
+
+export async function updateCategory(
+  id: string,
+  updates: { name?: string; description?: string; color?: string; icon?: string }
+): Promise<CategoryItem> {
+  try {
+    const res = await fetch(`${API_BASE}/categories/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.data) {
+      const current = getLocalCategories().map(c => (c.id === id ? data.data : c));
+      saveLocalCategories(current);
+      return data.data;
+    } else if (data?.message) {
+      throw new Error(data.message);
+    }
+  } catch (err: any) {
+    if (err.message && !err.message.includes('fetch')) {
+      throw err;
+    }
+    console.warn('Backend updateCategory unavailable, updating in client storage:', err);
+  }
+
+  // Client-side fallback
+  const current = getLocalCategories();
+  const index = current.findIndex(c => c.id === id);
+  if (index === -1) throw new Error('Kategori tidak ditemukan.');
+
+  const oldName = current[index].name;
+  const newName = updates.name?.trim() || oldName;
+
+  if (newName.toLowerCase() !== oldName.toLowerCase()) {
+    const exists = current.some(c => c.id !== id && c.name.toLowerCase() === newName.toLowerCase());
+    if (exists) throw new Error(`Kategori "${newName}" sudah digunakan.`);
+  }
+
+  const updated: CategoryItem = {
+    ...current[index],
+    name: newName,
+    description: updates.description !== undefined ? updates.description?.trim() : current[index].description,
+    color: updates.color || current[index].color,
+    icon: updates.icon || current[index].icon,
+    updatedAt: new Date().toISOString()
+  };
+
+  current[index] = updated;
+  saveLocalCategories(current);
+
+  // If renamed, update local certificates too
+  if (oldName !== newName) {
+    const certs = getLocalCertificates();
+    const updatedCerts = certs.map(c => (c.category === oldName ? { ...c, category: newName } : c));
+    saveLocalCertificates(updatedCerts);
+  }
+
+  return updated;
+}
+
+export async function deleteCategory(
+  id: string,
+  fallbackCategory: string = 'Lainnya'
+): Promise<{ success: boolean; message: string; reallocatedCount?: number }> {
+  try {
+    const res = await fetch(`${API_BASE}/categories/${id}?fallbackCategory=${encodeURIComponent(fallbackCategory)}`, {
+      method: 'DELETE'
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.success) {
+      const current = getLocalCategories().filter(c => c.id !== id);
+      saveLocalCategories(current);
+      return data;
+    } else if (data?.message) {
+      throw new Error(data.message);
+    }
+  } catch (err: any) {
+    if (err.message && !err.message.includes('fetch')) {
+      throw err;
+    }
+    console.warn('Backend deleteCategory unavailable, deleting in client storage:', err);
+  }
+
+  // Client fallback
+  const current = getLocalCategories();
+  const target = current.find(c => c.id === id);
+  if (!target) throw new Error('Kategori tidak ditemukan.');
+
+  const remaining = current.filter(c => c.id !== id);
+  saveLocalCategories(remaining);
+
+  const certs = getLocalCertificates();
+  let reallocatedCount = 0;
+  const updatedCerts = certs.map(c => {
+    if (c.category === target.name) {
+      reallocatedCount++;
+      return { ...c, category: fallbackCategory };
+    }
+    return c;
+  });
+  saveLocalCertificates(updatedCerts);
+
+  return {
+    success: true,
+    message: `Kategori "${target.name}" berhasil dihapus.`,
+    reallocatedCount
+  };
+}
+
+export async function resetCategories(): Promise<CategoryItem[]> {
+  try {
+    const res = await fetch(`${API_BASE}/categories/reset`, {
+      method: 'POST'
+    });
+
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && Array.isArray(data?.data)) {
+      saveLocalCategories(data.data);
+      return data.data;
+    }
+  } catch (err) {
+    console.warn('Backend resetCategories unavailable, resetting in client storage:', err);
+  }
+
+  saveLocalCategories(DEFAULT_CATEGORIES);
+  return DEFAULT_CATEGORIES;
 }

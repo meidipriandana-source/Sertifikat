@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, UploadCloud, FileText, Image as ImageIcon, CheckCircle, 
   AlertCircle, Cloud, Sparkles, Calendar, User, Tag, Building2, Hash, Clock,
-  Files, CheckSquare, Layers, Plus, Trash2, Wand2, Loader2, Scan
+  Files, CheckSquare, Layers, Plus, Trash2, Wand2, Loader2, Scan, RefreshCw, Check
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { 
@@ -11,11 +12,13 @@ import {
   parseCertificateItemInfo,
   scanCertificateFile,
   scanBatchCertificateFiles,
+  suggestCategoryAndTags,
   ScannedCertificateResult
 } from '../services/api';
 import { GoogleAuthState } from '../services/googleAuth';
-import { Certificate, CertificateCategory } from '../types';
+import { Certificate, CertificateCategory, CategoryItem } from '../types';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
+import { BatchUploadProgressBar, BatchUploadProgressState } from './BatchUploadProgressBar';
 
 interface CertificateUploadModalProps {
   isOpen: boolean;
@@ -24,6 +27,8 @@ interface CertificateUploadModalProps {
   onBatchSuccess?: (newCerts: Certificate[]) => void;
   authState: GoogleAuthState;
   onOpenGoogleConnect: () => void;
+  categoriesList?: CategoryItem[];
+  onOpenCategoryManager?: () => void;
 }
 
 interface BatchFileItem {
@@ -34,6 +39,9 @@ interface BatchFileItem {
   issuer?: string;
   issueDate?: string;
   expiryDate?: string;
+  suggestedTags?: string[];
+  tags?: string[];
+  extractedTextSummary?: string;
   isScanning?: boolean;
   scannedSource?: 'ai_vision' | 'filename_heuristic';
 }
@@ -44,10 +52,17 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   onSuccess,
   onBatchSuccess,
   authState,
-  onOpenGoogleConnect
+  onOpenGoogleConnect,
+  categoriesList = [],
+  onOpenCategoryManager
 }) => {
   const [uploadMode, setUploadMode] = useState<'single' | 'batch'>('single');
   
+  // Available category names
+  const availableCategories = categoriesList.length > 0 
+    ? categoriesList.map(c => c.name)
+    : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
+
   // Single upload states
   const [title, setTitle] = useState('');
   const [recipientName, setRecipientName] = useState('');
@@ -61,8 +76,12 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const [description, setDescription] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
+  const [aiSuggestedTags, setAiSuggestedTags] = useState<string[]>([]);
+  const [aiExtractedSummary, setAiExtractedSummary] = useState<string | null>(null);
   const [isScanningSingle, setIsScanningSingle] = useState(false);
   const [singleScanSuccess, setSingleScanSuccess] = useState<boolean | null>(null);
+  const [scanSource, setScanSource] = useState<'ai_vision' | 'filename_heuristic' | null>(null);
+  const [isRequestingAISuggestions, setIsRequestingAISuggestions] = useState(false);
   
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -70,19 +89,20 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
   // Batch upload states
   const [batchFiles, setBatchFiles] = useState<BatchFileItem[]>([]);
-  const [batchIssuer, setBatchIssuer] = useState('Penyelenggara Diklat Resmi');
+  const [batchCommonTitle, setBatchCommonTitle] = useState('Pelatihan Bantuan Hidup Dasar (BHD)');
+  const [batchIssuer, setBatchIssuer] = useState('Diklat RSUD dr. H. Jusuf SK');
+  const [batchCommonCategory, setBatchCommonCategory] = useState<CertificateCategory>('Pelatihan');
   const [batchValidityYears, setBatchValidityYears] = useState<number>(3);
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+  const [batchProgress, setBatchProgress] = useState<BatchUploadProgressState | null>(null);
   const [isScanningBatch, setIsScanningBatch] = useState(false);
   const [autoScanEnabled, setAutoScanEnabled] = useState(true);
+  const [batchSearchTerm, setBatchSearchTerm] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchFileInputRef = useRef<HTMLInputElement>(null);
-
-  if (!isOpen) return null;
 
   const handleGenerateCredentialId = () => {
     const year = issueDate ? issueDate.split('-')[0] : new Date().getFullYear().toString();
@@ -98,20 +118,79 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     setHasExpiryDate(true);
   };
 
-  const handleAddTag = () => {
-    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
-      setTags([...tags, tagInput.trim()]);
-      setTagInput('');
+  const handleApplyCommonTitleToAll = () => {
+    if (!batchCommonTitle.trim()) return;
+    setBatchFiles(batchFiles.map(item => ({ ...item, title: batchCommonTitle.trim() })));
+  };
+
+  const handleApplyCommonCategoryToAll = (newCat: CertificateCategory) => {
+    setBatchCommonCategory(newCat);
+    setBatchFiles(batchFiles.map(item => ({ ...item, category: newCat })));
+  };
+
+  const handleAddTag = (customTag?: string) => {
+    const targetTag = (customTag !== undefined ? customTag : tagInput).trim();
+    if (targetTag && !tags.includes(targetTag)) {
+      setTags([...tags, targetTag]);
+      if (customTag === undefined) setTagInput('');
     }
+  };
+
+  const handleToggleSuggestedTag = (suggested: string) => {
+    if (tags.includes(suggested)) {
+      setTags(tags.filter(t => t !== suggested));
+    } else {
+      setTags([...tags, suggested]);
+    }
+  };
+
+  const handleAddAllSuggestedTags = () => {
+    if (aiSuggestedTags.length === 0) return;
+    const merged = Array.from(new Set([...tags, ...aiSuggestedTags]));
+    setTags(merged);
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
     setTags(tags.filter(t => t !== tagToRemove));
   };
 
+  // Re-request Gemini AI suggestions on demand based on current form values
+  const handleTriggerAISuggestions = async () => {
+    try {
+      setIsRequestingAISuggestions(true);
+      const res = await suggestCategoryAndTags({
+        title,
+        issuer,
+        recipientName,
+        description,
+        currentCategory: category
+      });
+
+      if (res.category && res.category !== category) {
+        setCategory(res.category);
+      }
+      if (res.suggestedTags && res.suggestedTags.length > 0) {
+        setAiSuggestedTags(res.suggestedTags);
+        // Add new suggested tags
+        setTags(prev => Array.from(new Set([...prev, ...res.suggestedTags])));
+      }
+      if (res.summary) {
+        setAiExtractedSummary(res.summary);
+      }
+    } catch (err) {
+      console.warn('AI suggestions error:', err);
+    } finally {
+      setIsRequestingAISuggestions(false);
+    }
+  };
+
   const handleSingleFileChange = async (selectedFile: File) => {
     setErrorMsg(null);
     setSingleScanSuccess(null);
+    setAiSuggestedTags([]);
+    setAiExtractedSummary(null);
+    setScanSource(null);
+
     const validMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!validMimes.includes(selectedFile.type)) {
       setErrorMsg('Format file tidak didukung. Harap pilih file PDF, JPG, atau PNG.');
@@ -156,7 +235,17 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
           setHasExpiryDate(true);
         }
         if (scanResult.credentialId && !credentialId) setCredentialId(scanResult.credentialId);
+        
+        if (scanResult.suggestedTags && scanResult.suggestedTags.length > 0) {
+          setAiSuggestedTags(scanResult.suggestedTags);
+          setTags(prev => Array.from(new Set([...prev, ...scanResult.suggestedTags!])));
+        }
+        if (scanResult.extractedTextSummary) {
+          setAiExtractedSummary(scanResult.extractedTextSummary);
+        }
+
         setSingleScanSuccess(true);
+        setScanSource(scanResult.source);
       }
     } catch (scanErr) {
       console.warn('AI OCR scan error on single file:', scanErr);
@@ -176,6 +265,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
         results.forEach((res) => {
           const idx = next.findIndex(n => n.file.name === res.fileName);
           if (idx !== -1) {
+            const itemTags = res.suggestedTags && res.suggestedTags.length > 0 ? res.suggestedTags : [res.category || next[idx].category];
             next[idx] = {
               ...next[idx],
               recipientName: res.recipientName || next[idx].recipientName,
@@ -184,6 +274,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               issuer: res.issuer || next[idx].issuer,
               issueDate: res.issueDate || next[idx].issueDate,
               expiryDate: res.expiryDate || next[idx].expiryDate,
+              suggestedTags: res.suggestedTags,
+              tags: itemTags,
+              extractedTextSummary: res.extractedTextSummary,
               isScanning: false,
               scannedSource: res.source
             };
@@ -205,12 +298,15 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
     Array.from(newFileList).forEach((f) => {
       if (validMimes.includes(f.type) && f.size <= 30 * 1024 * 1024) {
-        const parsed = parseCertificateItemInfo(f.name, 'Sertifikat Pelatihan', 'Staff Perawat / Medis RSUD');
+        const fallbackTitle = batchCommonTitle.trim() || 'Sertifikat Pelatihan';
+        const parsed = parseCertificateItemInfo(f.name, fallbackTitle, 'Peserta Diklat');
         addedItems.push({
           file: f,
-          title: parsed.title,
+          title: batchCommonTitle.trim() ? batchCommonTitle.trim() : parsed.title,
           recipientName: parsed.recipientName,
-          category: parsed.category,
+          category: batchCommonCategory || parsed.category,
+          suggestedTags: [parsed.category, 'Diklat RSUD'],
+          tags: [parsed.category, 'Diklat RSUD'],
           isScanning: autoScanEnabled,
           scannedSource: 'filename_heuristic'
         });
@@ -314,7 +410,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     }
   };
 
-  // Batch Upload Submit (Processes each file individually and creates separate records)
+  // Batch Upload Submit (Processes each file individually and creates separate records with real-time ETA telemetry)
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -324,14 +420,51 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
       return;
     }
 
+    const totalFiles = batchFiles.length;
+    const totalBytes = batchFiles.reduce((acc, curr) => acc + curr.file.size, 0);
+    const startTime = Date.now();
+    let accumulatedBytes = 0;
+
     try {
       setIsSubmitting(true);
-      setBatchProgress({ current: 0, total: batchFiles.length });
+      setBatchProgress({
+        current: 0,
+        total: totalFiles,
+        currentFileName: batchFiles[0]?.file.name,
+        currentRecipient: batchFiles[0]?.recipientName,
+        bytesUploaded: 0,
+        totalBytes,
+        startTime,
+        estimatedRemainingSec: totalFiles * 2.5,
+        uploadSpeedKBs: 0,
+        statusText: `Menyiapkan pengunggahan ${totalFiles} berkas ke Google Drive...`
+      });
 
       const uploadedCerts: Certificate[] = [];
 
       for (let i = 0; i < batchFiles.length; i++) {
         const item = batchFiles[i];
+        
+        // Update state at start of each file
+        const itemStartTime = Date.now();
+        const elapsedTotalSec = Math.max(0.5, (Date.now() - startTime) / 1000);
+        const currentSpeedKBs = accumulatedBytes > 0 ? (accumulatedBytes / 1024) / elapsedTotalSec : 250;
+        const remainingBytes = Math.max(0, totalBytes - accumulatedBytes);
+        const estimatedRemainingSec = currentSpeedKBs > 0 ? Math.ceil((remainingBytes / 1024) / currentSpeedKBs) : (totalFiles - i) * 2;
+
+        setBatchProgress({
+          current: i,
+          total: totalFiles,
+          currentFileName: item.file.name,
+          currentRecipient: item.recipientName,
+          bytesUploaded: accumulatedBytes,
+          totalBytes,
+          startTime,
+          estimatedRemainingSec,
+          uploadSpeedKBs: currentSpeedKBs,
+          statusText: `Mengunggah berkas ${i + 1} dari ${totalFiles}: "${item.file.name}"...`
+        });
+
         const formData = new FormData();
         formData.append('file', item.file);
         formData.append('title', item.title.trim());
@@ -348,11 +481,35 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
         formData.append('issuer', batchIssuer.trim() || 'Penyelenggara Diklat / Kemenkes');
         formData.append('category', item.category);
-        formData.append('tags', JSON.stringify(['Batch Multi-File', item.category]));
+        
+        const itemTags = item.tags && item.tags.length > 0 
+          ? item.tags 
+          : (item.suggestedTags && item.suggestedTags.length > 0 ? item.suggestedTags : ['Batch Multi-File', item.category]);
+        formData.append('tags', JSON.stringify(itemTags));
 
         const resCert = await uploadCertificate(formData);
         uploadedCerts.push(resCert);
-        setBatchProgress({ current: i + 1, total: batchFiles.length });
+        
+        accumulatedBytes += item.file.size;
+        const nowElapsedSec = Math.max(0.5, (Date.now() - startTime) / 1000);
+        const updatedSpeedKBs = (accumulatedBytes / 1024) / nowElapsedSec;
+        const updatedRemainingBytes = Math.max(0, totalBytes - accumulatedBytes);
+        const updatedRemainingSec = (totalFiles - (i + 1) === 0) ? 0 : Math.ceil((updatedRemainingBytes / 1024) / (updatedSpeedKBs || 250));
+
+        setBatchProgress({
+          current: i + 1,
+          total: totalFiles,
+          currentFileName: i + 1 < totalFiles ? batchFiles[i + 1]?.file.name : item.file.name,
+          currentRecipient: i + 1 < totalFiles ? batchFiles[i + 1]?.recipientName : item.recipientName,
+          bytesUploaded: accumulatedBytes,
+          totalBytes,
+          startTime,
+          estimatedRemainingSec: updatedRemainingSec,
+          uploadSpeedKBs: updatedSpeedKBs,
+          statusText: i + 1 === totalFiles 
+            ? 'Semua berkas selesai diunggah! Menyelesaikan...' 
+            : `Selesai ${i + 1}/${totalFiles}. Menyiapkan berkas berikutnya...`
+        });
       }
 
       try {
@@ -379,12 +536,34 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     }
   };
 
+  const filteredBatchFiles = batchSearchTerm.trim() 
+    ? batchFiles.filter(b => 
+        b.file.name.toLowerCase().includes(batchSearchTerm.toLowerCase()) || 
+        b.recipientName.toLowerCase().includes(batchSearchTerm.toLowerCase()) ||
+        b.title.toLowerCase().includes(batchSearchTerm.toLowerCase())
+      )
+    : batchFiles;
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors">
-      <div 
-        id="modal-upload-certificate"
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all my-6 max-h-[92vh] flex flex-col"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            id="modal-upload-certificate"
+            className={`bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full overflow-hidden border border-slate-200 dark:border-slate-800 transition-all my-6 max-h-[92vh] flex flex-col ${
+              uploadMode === 'batch' ? 'max-w-6xl' : 'max-w-2xl'
+            }`}
+          >
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850 shrink-0">
           <div className="flex items-center gap-3">
@@ -392,9 +571,11 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               <UploadCloud className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Unggah Sertifikat</h2>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">Unggah Sertifikat Diklat RSUD</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                Pilih unggah satu berkas atau banyak berkas sekaligus (otomatis disendirikan)
+                {uploadMode === 'batch' 
+                  ? 'Unggah banyak berkas sekaligus — nama otomatis terbaca & dibuatkan kolom per orang'
+                  : 'Unggah berkas sertifikat tunggal dengan verifikasi data lengkap'}
               </p>
             </div>
           </div>
@@ -440,7 +621,14 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               }`}
             >
               <Files className="w-3.5 h-3.5" />
-              <span>Unggah Banyak File Sekaligus (Batch)</span>
+              <span className="flex items-center gap-1.5">
+                <span>Unggah Banyak File Sekaligus (Batch Kolom Nama)</span>
+                {batchFiles.length > 0 && (
+                  <span className="px-2 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded-full">
+                    {batchFiles.length} file
+                  </span>
+                )}
+              </span>
             </button>
           </div>
         </div>
@@ -602,21 +790,28 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
               {/* Category, Issuer, Dates */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    Kategori
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase">
+                      Kategori
+                    </label>
+                    {onOpenCategoryManager && (
+                      <button
+                        type="button"
+                        onClick={onOpenCategoryManager}
+                        className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+                      >
+                        + Kelola
+                      </button>
+                    )}
+                  </div>
                   <select
                     value={category}
-                    onChange={(e) => setCategory(e.target.value as CertificateCategory)}
+                    onChange={(e) => setCategory(e.target.value)}
                     className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="Pelatihan">Pelatihan</option>
-                    <option value="Workshop">Workshop</option>
-                    <option value="Prestasi">Prestasi</option>
-                    <option value="Penghargaan">Penghargaan</option>
-                    <option value="Akademik">Akademik</option>
-                    <option value="Kelulusan">Kelulusan</option>
-                    <option value="Lainnya">Lainnya</option>
+                    {availableCategories.map(catName => (
+                      <option key={catName} value={catName}>{catName}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -702,6 +897,147 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                 )}
               </div>
 
+              {/* Gemini AI Category & Tags Section */}
+              <div className="p-3.5 rounded-2xl border border-indigo-100 dark:border-indigo-900/50 bg-gradient-to-br from-indigo-50/50 via-white to-purple-50/40 dark:from-slate-850 dark:via-slate-850 dark:to-indigo-950/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        Rekomendasi Kategori & Tag Gemini AI
+                        {scanSource === 'ai_vision' && (
+                          <span className="text-[9px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded font-semibold">
+                            AI OCR Aktif
+                          </span>
+                        )}
+                      </h4>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        AI menganalisis isi sertifikat untuk menentukan kategori yang tepat dan membuat tag relevan.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleTriggerAISuggestions}
+                    disabled={isRequestingAISuggestions || (!title && !recipientName && !file)}
+                    className="px-2.5 py-1 text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 rounded-xl hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    title="Minta AI Gemini untuk menganalisis ulang teks dan memberikan rekomendasi baru"
+                  >
+                    {isRequestingAISuggestions ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Menganalisis...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Saran AI Ulang</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* AI Extracted Summary (if present) */}
+                {aiExtractedSummary && (
+                  <div className="text-[11px] bg-white/80 dark:bg-slate-800/80 p-2.5 rounded-xl border border-indigo-100 dark:border-indigo-900/40 text-slate-700 dark:text-slate-300">
+                    <span className="font-bold text-indigo-600 dark:text-indigo-400 mr-1">Ringkasan Dokumen:</span>
+                    {aiExtractedSummary}
+                  </div>
+                )}
+
+                {/* Suggested Tags from Gemini */}
+                {aiSuggestedTags.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Tag yang Disarankan AI (Klik untuk memilih):
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAddAllSuggestedTags}
+                        className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+                      >
+                        + Gunakan Semua Tag AI
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {aiSuggestedTags.map((st) => {
+                        const isSelected = tags.includes(st);
+                        return (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => handleToggleSuggestedTag(st)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-indigo-300'
+                            }`}
+                          >
+                            {isSelected ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3 text-indigo-500" />}
+                            <span>{st}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Active Tags & Custom Tag Input */}
+                <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                    Tag Sertifikat yang Terpasang:
+                  </label>
+                  
+                  {tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {tags.map((t) => (
+                        <span
+                          key={t}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60"
+                        >
+                          <Tag className="w-3 h-3 text-indigo-500" />
+                          <span>{t}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(t)}
+                            className="text-indigo-400 hover:text-rose-600 dark:hover:text-rose-400 ml-0.5"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddTag();
+                        }
+                      }}
+                      placeholder="Tambah tag manual (tekan Enter)..."
+                      className="flex-1 px-3 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddTag()}
+                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
+                    >
+                      + Tambah Tag
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Submit Single */}
               <button
                 type="submit"
@@ -727,12 +1063,15 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
           {uploadMode === 'batch' && (
             <form onSubmit={handleBatchSubmit} className="space-y-4">
               
-              {/* Batch Dropzone */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                    Pilih Banyak File PDF/Gambar Sekaligus <span className="text-rose-500">*</span>
-                  </label>
+              {/* Batch Settings Bar */}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Wand2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <span className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider">
+                      Pengaturan Pelatihan Bersama (Batch)
+                    </span>
+                  </div>
                   <label className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer">
                     <input
                       type="checkbox"
@@ -740,11 +1079,86 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       onChange={(e) => setAutoScanEnabled(e.target.checked)}
                       className="rounded text-indigo-600"
                     />
-                    <Sparkles className="w-3 h-3" />
-                    <span>Otomatis Baca Nama (AI OCR)</span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Otomatis Baca Nama & Format Gelar</span>
                   </label>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase mb-1">
+                      Judul Pelatihan Bersama
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={batchCommonTitle}
+                        onChange={(e) => setBatchCommonTitle(e.target.value)}
+                        placeholder="Contoh: Pelatihan Bantuan Hidup Dasar (BHD)"
+                        className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyCommonTitleToAll}
+                        title="Terapkan judul ini ke semua baris berkas di bawah"
+                        className="px-2.5 py-1.5 text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 rounded-xl hover:bg-indigo-200 cursor-pointer shrink-0"
+                      >
+                        Terapkan
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase mb-1">
+                      Penyelenggara / Penerbit
+                    </label>
+                    <input
+                      type="text"
+                      value={batchIssuer}
+                      onChange={(e) => setBatchIssuer(e.target.value)}
+                      placeholder="Diklat RSUD dr. H. Jusuf SK"
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase mb-1">
+                        Masa Berlaku
+                      </label>
+                      <select
+                        value={batchValidityYears}
+                        onChange={(e) => setBatchValidityYears(Number(e.target.value))}
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                      >
+                        <option value={1}>1 Tahun</option>
+                        <option value={2}>2 Tahun</option>
+                        <option value={3}>3 Tahun (Medis)</option>
+                        <option value={5}>5 Tahun</option>
+                        <option value={0}>Seumur Hidup</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase mb-1">
+                        Kategori
+                      </label>
+                      <select
+                        value={batchCommonCategory}
+                        onChange={(e) => handleApplyCommonCategoryToAll(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                      >
+                        {availableCategories.map(catName => (
+                          <option key={catName} value={catName}>{catName}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Batch Dropzone */}
+              <div>
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
@@ -756,7 +1170,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                     }
                   }}
                   onClick={() => batchFileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                  className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all ${
                     isDragging
                       ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30'
                       : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/50 bg-slate-50/60 dark:bg-slate-800/40'
@@ -775,34 +1189,57 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                     }}
                   />
 
-                  <div className="space-y-1.5">
-                    <Files className="w-9 h-9 mx-auto text-indigo-600 dark:text-indigo-400" />
-                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Tarik & lepas banyak berkas PDF/Foto atau klik untuk pilih sekaligus
-                    </p>
-                    <p className="text-[11px] text-slate-400">
-                      Sistem membaca nama penerima dan memisahkan setiap sertifikat secara individu ke sistem
-                    </p>
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-indigo-100 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-xs">
+                      <Files className="w-6 h-6" />
+                    </div>
+                    <div className="text-center sm:text-left">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Klik untuk memilih atau tarik & lepas semua berkas (PNG / JPG / PDF) dari folder
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Format nama seperti <span className="font-mono text-indigo-600 dark:text-indigo-400">Sertifikat_Tri_Mulyani_S_A_P.png</span> langsung terbaca menjadi kolom nama peserta secara otomatis.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Batch Table / List */}
+              {/* Batch Table / Editable Columns Grid */}
               {batchFiles.length > 0 && (
-                <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden space-y-0">
+                  {/* Table Toolbar */}
+                  <div className="p-3.5 bg-slate-50/90 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-800 dark:text-slate-200 text-xs">
-                        {batchFiles.length} Berkas Siap Diunggah (Disendirikan):
+                      <span className="font-bold text-slate-900 dark:text-white text-xs">
+                        Daftar Berkas Terdeteksi ({batchFiles.length} Peserta)
                       </span>
                       {isScanningBatch && (
-                        <span className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-indigo-100 dark:bg-indigo-950/80 px-2 py-0.5 rounded-full animate-pulse">
+                        <span className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-bold bg-indigo-100 dark:bg-indigo-950/80 px-2.5 py-0.5 rounded-full animate-pulse">
                           <Loader2 className="w-3 h-3 animate-spin" />
                           Memindai nama peserta...
                         </span>
                       )}
                     </div>
+
                     <div className="flex items-center gap-2">
+                      {batchFiles.length > 5 && (
+                        <input
+                          type="text"
+                          value={batchSearchTerm}
+                          onChange={(e) => setBatchSearchTerm(e.target.value)}
+                          placeholder="Cari nama peserta / file..."
+                          className="px-2.5 py-1 text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => batchFileInputRef.current?.click()}
+                        className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Tambah Berkas Lagi</span>
+                      </button>
                       <button
                         type="button"
                         onClick={handleTriggerManualBatchScan}
@@ -815,131 +1252,196 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setBatchFiles([])}
-                        className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline cursor-pointer"
+                        className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline cursor-pointer px-1"
                       >
                         Hapus Semua
                       </button>
                     </div>
                   </div>
 
-                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {batchFiles.map((item, idx) => (
-                      <div 
-                        key={idx} 
-                        className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-5 h-5 rounded-full bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold flex items-center justify-center shrink-0">
-                              {idx + 1}
-                            </span>
-                            <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-xs">
-                              📁 {item.file.name}
-                            </span>
-                            {item.isScanning ? (
-                              <span className="text-[10px] text-indigo-600 font-bold flex items-center gap-1 animate-pulse">
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                Membaca...
-                              </span>
-                            ) : item.scannedSource === 'ai_vision' ? (
-                              <span className="text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                <Sparkles className="w-2.5 h-2.5" />
-                                Terbaca AI
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
-                                Nama Berkas
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveBatchItem(idx)}
-                            className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer p-1"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                  {/* The Columns Table */}
+                  <div className="max-h-80 overflow-y-auto overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[760px]">
+                      <thead className="bg-slate-100/80 dark:bg-slate-800/80 text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10 text-center">No</th>
+                          <th className="py-2.5 px-3 w-52">Berkas Dokumen</th>
+                          <th className="py-2.5 px-3 min-w-[200px]">Kolom Nama Peserta <span className="text-rose-500">*</span></th>
+                          <th className="py-2.5 px-3 min-w-[180px]">Kolom Judul Sertifikat</th>
+                          <th className="py-2.5 px-3 w-28">Kategori</th>
+                          <th className="py-2.5 px-3 min-w-[150px]">Tag AI / Label</th>
+                          <th className="py-2.5 px-3 w-24 text-center">Status</th>
+                          <th className="py-2.5 px-3 w-10 text-center">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                        {filteredBatchFiles.map((item, idx) => {
+                          const originalIdx = batchFiles.indexOf(item);
+                          const isPng = item.file.type.includes('png') || item.file.name.toLowerCase().endsWith('.png');
+                          const isPdf = item.file.type.includes('pdf') || item.file.name.toLowerCase().endsWith('.pdf');
+                          const currentItemTags = item.tags || item.suggestedTags || [item.category];
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Nama Peserta / Penerima:</label>
-                            <input
-                              type="text"
-                              value={item.recipientName}
-                              onChange={(e) => handleBatchItemChange(idx, 'recipientName', e.target.value)}
-                              placeholder="Nama Penerima / Pemilik"
-                              className="w-full px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Judul Sertifikat:</label>
-                            <input
-                              type="text"
-                              value={item.title}
-                              onChange={(e) => handleBatchItemChange(idx, 'title', e.target.value)}
-                              placeholder="Judul Pelatihan / Sertifikat"
-                              className="w-full px-2.5 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                              {/* No */}
+                              <td className="py-2 px-3 text-center font-bold text-slate-400">
+                                {idx + 1}
+                              </td>
+
+                              {/* File name & info */}
+                              <td className="py-2 px-3">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 text-[10px] font-bold ${
+                                    isPdf ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300'
+                                  }`}>
+                                    {isPdf ? 'PDF' : 'PNG'}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="font-medium text-slate-900 dark:text-slate-200 truncate max-w-[170px] text-[11px]" title={item.file.name}>
+                                      {item.file.name}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400">
+                                      {(item.file.size / 1024).toFixed(0)} KB
+                                    </p>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Recipient Name Column */}
+                              <td className="py-2 px-3">
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    required
+                                    value={item.recipientName}
+                                    onChange={(e) => handleBatchItemChange(originalIdx, 'recipientName', e.target.value)}
+                                    placeholder="Nama Peserta"
+                                    className="w-full px-2.5 py-1.5 text-xs font-bold border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                </div>
+                              </td>
+
+                              {/* Title Column */}
+                              <td className="py-2 px-3">
+                                <input
+                                  type="text"
+                                  value={item.title}
+                                  onChange={(e) => handleBatchItemChange(originalIdx, 'title', e.target.value)}
+                                  placeholder="Judul Sertifikat"
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
+                                />
+                              </td>
+
+                              {/* Category */}
+                              <td className="py-2 px-3">
+                                <select
+                                  value={item.category}
+                                  onChange={(e) => handleBatchItemChange(originalIdx, 'category', e.target.value)}
+                                  className="w-full px-2 py-1.5 text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
+                                >
+                                  {availableCategories.map(catName => (
+                                    <option key={catName} value={catName}>{catName}</option>
+                                  ))}
+                                </select>
+                              </td>
+
+                              {/* Tag AI / Label Column */}
+                              <td className="py-2 px-3">
+                                <div className="flex flex-wrap gap-1 items-center max-w-[200px]">
+                                  {currentItemTags.slice(0, 3).map((t, tIdx) => (
+                                    <span
+                                      key={tIdx}
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/50 truncate max-w-[90px]"
+                                      title={t}
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                  {currentItemTags.length > 3 && (
+                                    <span className="text-[9px] text-slate-400 font-medium">
+                                      +{currentItemTags.length - 3}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-2 px-3 text-center">
+                                {item.isScanning ? (
+                                  <span className="text-[10px] text-indigo-600 font-bold flex items-center justify-center gap-1 animate-pulse">
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                    Membaca...
+                                  </span>
+                                ) : item.scannedSource === 'ai_vision' ? (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded">
+                                    <Sparkles className="w-2.5 h-2.5" />
+                                    AI Terbaca
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">
+                                    <CheckCircle className="w-2.5 h-2.5" />
+                                    Nama Terbaca
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Delete */}
+                              <td className="py-2 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveBatchItem(originalIdx)}
+                                  title="Hapus baris ini"
+                                  className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Summary footer within table */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-850 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>
+                      Total: <strong className="text-slate-900 dark:text-white">{batchFiles.length} Sertifikat</strong> akan disimpan ke arsip RSUD dr. H. Jusuf SK.
+                    </span>
+                    <span className="text-[11px]">
+                      Penerbit: <strong className="text-slate-800 dark:text-slate-200">{batchIssuer}</strong> | Masa Berlaku: <strong className="text-slate-800 dark:text-slate-200">{batchValidityYears > 0 ? `${batchValidityYears} Tahun` : 'Seumur Hidup'}</strong>
+                    </span>
                   </div>
                 </div>
               )}
 
-              {/* Global Batch Settings */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    Penyelenggara / Penerbit Bersama
-                  </label>
-                  <input
-                    type="text"
-                    value={batchIssuer}
-                    onChange={(e) => setBatchIssuer(e.target.value)}
-                    placeholder="Penyelenggara Diklat / Kemenkes"
-                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    Masa Berlaku Default
-                  </label>
-                  <select
-                    value={batchValidityYears}
-                    onChange={(e) => setBatchValidityYears(Number(e.target.value))}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
-                  >
-                    <option value={1}>1 Tahun</option>
-                    <option value={2}>2 Tahun</option>
-                    <option value={3}>3 Tahun (Standar Pelatihan Medis)</option>
-                    <option value={4}>4 Tahun</option>
-                    <option value={5}>5 Tahun</option>
-                    <option value={0}>Seumur Hidup / Tanpa Expired</option>
-                  </select>
-                </div>
-              </div>
+              {/* Detailed Progress Bar & Estimation Box */}
+              <BatchUploadProgressBar
+                progress={batchProgress}
+                isSubmitting={isSubmitting}
+              />
 
               {/* Submit Batch */}
               <button
                 type="submit"
                 disabled={isSubmitting || batchFiles.length === 0}
-                className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-indigo-950/60 transition-all cursor-pointer disabled:opacity-50"
+                className="w-full py-3.5 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-indigo-950/60 transition-all cursor-pointer disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     <span>
-                      Mengunggah & Memisahkan {batchProgress?.current || 0} dari {batchProgress?.total || batchFiles.length} Berkas...
+                      Mengunggah & Menyimpan {batchProgress?.current || 0} dari {batchProgress?.total || batchFiles.length} Berkas Sertifikat...
                     </span>
                   </>
                 ) : (
                   <>
                     <UploadCloud className="w-4 h-4" />
-                    <span>Unggah {batchFiles.length} Berkas Secara Terpisah Sekarang</span>
+                    <span>
+                      {batchFiles.length > 0 
+                        ? `Unggah & Simpan Semua ${batchFiles.length} Sertifikat Sekarang`
+                        : 'Pilih Berkas Terlebih Dahulu'}
+                    </span>
                   </>
                 )}
               </button>
@@ -949,7 +1451,10 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-slate-50 dark:bg-slate-850 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end shrink-0">
+        <div className="px-6 py-4 bg-slate-50 dark:bg-slate-850 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+          <p className="text-[11px] text-slate-400">
+            Sistem Arsip & Verifikasi Sertifikat Diklat RSUD dr. H. Jusuf SK
+          </p>
           <button
             type="button"
             onClick={onClose}
@@ -959,7 +1464,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
           </button>
         </div>
 
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

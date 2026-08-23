@@ -31,9 +31,22 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Database directory & path setup
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'certificates.json');
+const CATEGORIES_DB_FILE = path.join(DATA_DIR, 'categories.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// Category Interface
+interface CategoryRecord {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  icon?: string;
+  isDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Certificate Interface
@@ -45,7 +58,7 @@ interface CertificateRecord {
   issueDate: string;
   expiryDate?: string; // Masa berlaku sertifikat (YYYY-MM-DD or undefined/empty for seumur hidup)
   issuer: string;
-  category: 'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya';
+  category: string;
   description?: string;
   credentialId?: string;
   tags?: string[];
@@ -194,6 +207,43 @@ function saveCertificatesToDB(records: CertificateRecord[]): void {
     fs.writeFileSync(DB_FILE, JSON.stringify(records, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving certificates DB:', err);
+  }
+}
+
+// Initial Default Categories
+const INITIAL_CATEGORIES: CategoryRecord[] = [
+  { id: 'cat-prestasi', name: 'Prestasi', description: 'Penghargaan, kejuaraan, dan capaian kompetisi', color: 'amber', icon: 'Award', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-pelatihan', name: 'Pelatihan', description: 'Pelatihan profesi, diklat teknis, dan sertifikasi keahlian', color: 'indigo', icon: 'Briefcase', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-workshop', name: 'Workshop', description: 'Workshop, seminar ilmiah, webinar, dan simposium', color: 'emerald', icon: 'Sparkles', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-akademik', name: 'Akademik', description: 'Ijazah formal, diploma, transkrip, dan program sarjana', color: 'blue', icon: 'GraduationCap', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-penghargaan', name: 'Penghargaan', description: 'Tanda kehormatan, apresiasi pengabdian, dan penghargaan khusus', color: 'purple', icon: 'Shield', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-kelulusan', name: 'Kelulusan', description: 'Surat tanda tamat pendidikan, kelulusan ujian, dan lisensi', color: 'teal', icon: 'FileCheck', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'cat-lainnya', name: 'Lainnya', description: 'Kategori umum dan dokumen sertifikat lainnya', color: 'slate', icon: 'Tag', isDefault: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+];
+
+function getCategoriesFromDB(): CategoryRecord[] {
+  try {
+    if (!fs.existsSync(CATEGORIES_DB_FILE)) {
+      fs.writeFileSync(CATEGORIES_DB_FILE, JSON.stringify(INITIAL_CATEGORIES, null, 2), 'utf-8');
+      return INITIAL_CATEGORIES;
+    }
+    const raw = fs.readFileSync(CATEGORIES_DB_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+    return INITIAL_CATEGORIES;
+  } catch (err) {
+    console.error('Error reading categories DB:', err);
+    return INITIAL_CATEGORIES;
+  }
+}
+
+function saveCategoriesToDB(categories: CategoryRecord[]): void {
+  try {
+    fs.writeFileSync(CATEGORIES_DB_FILE, JSON.stringify(categories, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving categories DB:', err);
   }
 }
 
@@ -365,9 +415,64 @@ interface ScannedCertResult {
   issuer: string;
   issueDate: string;
   expiryDate?: string;
-  category: 'Prestasi' | 'Pelatihan' | 'Workshop' | 'Akademik' | 'Penghargaan' | 'Kelulusan' | 'Lainnya';
+  category: string;
+  suggestedTags: string[];
   credentialId?: string;
+  extractedTextSummary?: string;
   source: 'ai_vision' | 'filename_heuristic';
+}
+
+function cleanAndFormatPersonName(raw: string): string {
+  if (!raw) return '';
+  let str = raw.trim();
+
+  // Strip file extension
+  str = str.replace(/\.[^/.]+$/, '');
+  // Strip leading numbers
+  str = str.replace(/^[0-9]+[\.\-\_\s]+/, '');
+
+  // Strip common prefix keywords
+  str = str.replace(/^(sertifikat|certificate|pelatihan|diklat|piagam|seminar|workshop|webinar)[\_\s\-\–\|]+/i, '');
+
+  // Convert underscores and dashes to spaces
+  str = str.replace(/[_\-]+/g, ' ').trim();
+
+  const words = str.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return raw;
+
+  const formattedWords = words.map((w) => {
+    const lower = w.toLowerCase();
+    if (/^dr\.?$/i.test(w)) return 'dr.';
+    if (/^drg\.?$/i.test(w)) return 'drg.';
+    if (/^ns\.?$/i.test(w)) return 'Ns.';
+    if (/^prof\.?$/i.test(w)) return 'Prof.';
+    if (/^apt\.?$/i.test(w)) return 'Apt.';
+    if (/^ners\.?$/i.test(w)) return 'Ners';
+    if (/^sp\.?[a-z]{1,4}$/i.test(w)) {
+      return w.replace(/^sp\.?/i, 'Sp.').toUpperCase();
+    }
+    if (/^(s\.kep|m\.kes|mars|skm|s\.kom|s\.t|s\.pd|s\.si|s\.e|m\.pd|s\.ked|m\.m|m\.si)$/i.test(lower)) {
+      return w.toUpperCase();
+    }
+    if (w.length === 1 && /^[a-zA-Z]$/.test(w)) {
+      return w.toUpperCase() + '.';
+    }
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  });
+
+  let result = formattedWords.join(' ');
+
+  result = result.replace(/\s+([A-Z]\.)(?:\s+([A-Z]\.))+/g, (match) => {
+    const letters = match.trim().replace(/\s+/g, '');
+    return ', ' + letters;
+  });
+  result = result.replace(/\s+([A-Z]\.)$/, ', $1');
+  result = result.replace(/\s+(Sp\.[A-Z]+)/i, ', $1');
+  result = result.replace(/\s+(MDSc|MARS|SKM|S\.Kep|M\.Kes)/i, ', $1');
+  result = result.replace(/,\s*,/g, ',').trim();
+  result = result.replace(/^,\s*/, '').trim();
+
+  return result || raw;
 }
 
 function parseCertificateHeuristic(fileName: string): Omit<ScannedCertResult, 'source'> {
@@ -377,7 +482,7 @@ function parseCertificateHeuristic(fileName: string): Omit<ScannedCertResult, 's
   let title = 'Sertifikat Pelatihan';
   let recipient = 'Peserta Sertifikat';
   let category: ScannedCertResult['category'] = 'Pelatihan';
-  let issuer = 'Penyelenggara Resmi';
+  let issuer = 'Diklat RSUD dr. H. Jusuf SK';
   let issueDate = new Date().toISOString().split('T')[0];
   let expiryDate: string | undefined = undefined;
 
@@ -389,43 +494,54 @@ function parseCertificateHeuristic(fileName: string): Omit<ScannedCertResult, 's
     expiryDate = `${expYear}-08-15`;
   }
 
-  // Check delimiter separation (e.g., "dr. Budi Santoso - Pelatihan BTCLS" or "Pelatihan ICU _ Ns. Siti Rahma")
-  if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ') || clean.includes('_')) {
-    const delimiter = clean.includes(' - ') ? ' - ' : clean.includes(' – ') ? ' – ' : clean.includes(' | ') ? ' | ' : '_';
+  // Check prefix like Sertifikat_Tri_Mulyani_S_A_P.png
+  if (/^(sertifikat|certificate|piagam)[\_\s\-\–\|]+/i.test(clean)) {
+    const rest = clean.replace(/^(sertifikat|certificate|piagam)[\_\s\-\–\|]+/i, '').trim();
+    if (rest.includes(' - ') || rest.includes(' – ') || rest.includes(' | ')) {
+      const parts = rest.split(/[\-\–\|]+/).map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        title = `Sertifikat ${parts[0]}`;
+        recipient = cleanAndFormatPersonName(parts[1]);
+      } else {
+        recipient = cleanAndFormatPersonName(rest);
+      }
+    } else {
+      recipient = cleanAndFormatPersonName(rest);
+    }
+  } else if (clean.includes(' - ') || clean.includes(' – ') || clean.includes(' | ')) {
+    const delimiter = clean.includes(' - ') ? ' - ' : clean.includes(' – ') ? ' – ' : ' | ';
     const parts = clean.split(delimiter).map(p => p.trim()).filter(Boolean);
 
     if (parts.length >= 2) {
-      // Check which side has person titles (dr., drg., Ns., Sp., S.Kep, M.Kes, etc.)
-      const isPart0Person = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|ners)/i.test(parts[0]);
-      const isPart1Person = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|ners)/i.test(parts[1]);
+      const personTitleRegex = /(dr\.|drg\.|ns\.|prof\.|apt\.|sp\.|s\.kep|m\.kes|mars|skm|a\.md|s\.kom|s\.t|ners)/i;
+      const isPart0Person = personTitleRegex.test(parts[0]);
+      const isPart1Person = personTitleRegex.test(parts[1]);
 
       if (isPart0Person && !isPart1Person) {
-        recipient = parts[0];
+        recipient = cleanAndFormatPersonName(parts[0]);
         title = parts.slice(1).join(' - ');
       } else if (isPart1Person && !isPart0Person) {
         title = parts[0];
-        recipient = parts.slice(1).join(' - ');
+        recipient = cleanAndFormatPersonName(parts.slice(1).join(' - '));
       } else {
-        // Look for keywords like "Sertifikat", "Pelatihan", "Workshop"
-        const isPart0Title = /(sertifikat|pelatihan|workshop|seminar|diklat|kursus|bimtek|lomba|juara)/i.test(parts[0]);
+        const isPart0Title = /(sertifikat|pelatihan|workshop|seminar|diklat|kursus|bimtek|lomba|juara|bhd)/i.test(parts[0]);
         if (isPart0Title) {
           title = parts[0];
-          recipient = parts.slice(1).join(' - ');
+          recipient = cleanAndFormatPersonName(parts.slice(1).join(' - '));
         } else {
-          recipient = parts[0];
+          recipient = cleanAndFormatPersonName(parts[0]);
           title = parts.slice(1).join(' - ');
         }
       }
     }
-  } else if (clean.toLowerCase().startsWith('sertifikat ') || clean.toLowerCase().startsWith('pelatihan ') || clean.toLowerCase().startsWith('workshop ')) {
-    title = clean;
-    const nameMatch = clean.match(/(?:untuk|kepada|atas nama|an\.)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})/);
-    if (nameMatch) {
-      recipient = nameMatch[1];
-    }
   } else {
-    // If it looks like a person's name
-    recipient = clean;
+    recipient = cleanAndFormatPersonName(clean);
+  }
+
+  // Format title
+  title = title.replace(/_/g, ' ').trim();
+  if (title.toLowerCase() === 'sertifikat') {
+    title = 'Sertifikat Pelatihan';
   }
 
   // Determine category
@@ -441,15 +557,32 @@ function parseCertificateHeuristic(fileName: string): Omit<ScannedCertResult, 's
   else if (lower.includes('idi')) issuer = 'Ikatan Dokter Indonesia (IDI)';
   else if (lower.includes('ppni')) issuer = 'Persatuan Perawat Nasional Indonesia (PPNI)';
 
+  // Build smart heuristic tags
+  const tags: string[] = [];
+  if (category) tags.push(category);
+  if (/bhd/i.test(lower)) tags.push('BHD', 'Resusitasi Jantung');
+  if (/btcls/i.test(lower)) tags.push('BTCLS', 'Gawat Darurat');
+  if (/simrs|rme/i.test(lower)) tags.push('SIMRS', 'Rekam Medis');
+  if (/bedah|hipkabi/i.test(lower)) tags.push('Kamar Bedah', 'Bedah');
+  if (/icu|kritis/i.test(lower)) tags.push('ICU', 'Perawatan Kritis');
+  if (/kemenkes/i.test(lower)) tags.push('Kemenkes RI');
+  if (/ppni/i.test(lower)) tags.push('SKP PPNI');
+  if (/idi/i.test(lower)) tags.push('SKP IDI');
+  if (tags.length === 1) tags.push('Diklat RSUD', 'Kompetensi');
+
+  const uniqueTags = Array.from(new Set(tags)).slice(0, 5);
+
   return {
     fileName,
-    recipientName: recipient.replace(/_/g, ' ').trim(),
-    title: title.replace(/_/g, ' ').trim(),
+    recipientName: recipient || 'Peserta Diklat',
+    title: title || 'Sertifikat Pelatihan',
     issuer,
     issueDate,
     expiryDate,
     category,
-    credentialId: `CERT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`
+    suggestedTags: uniqueTags,
+    credentialId: `CERT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`,
+    extractedTextSummary: `Dokumen "${title}" untuk ${recipient || 'Peserta Diklat'}`
   };
 }
 
@@ -472,15 +605,26 @@ async function analyzeCertificateBuffer(
     const validGenAiMimes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
     const targetMime = validGenAiMimes.includes(mimeType) ? mimeType : (fileName.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-    const prompt = `Anda adalah sistem OCR dan AI pembaca sertifikat profesional.
-Baca dan analisis dokumen/gambar sertifikat ini (nama file: "${fileName}") dan ekstrak data berikut secara presisi dalam Bahasa Indonesia:
-1. recipientName: Nama lengkap orang/peserta penerima sertifikat. Wajib menyertakan gelar dokter/perawat/akademik jika tertulis (contoh: dr. Muhammad Rizky, Sp.A atau Ns. Siti Aminah, S.Kep).
-2. title: Nama atau judul kegiatan, pelatihan, workshop, keahlian, atau jenis sertifikat (contoh: Pelatihan BTCLS & Keperawatan Gawat Darurat).
-3. issuer: Nama instansi atau organisasi yang menerbitkan sertifikat (contoh: Kementerian Kesehatan RI, PPNI, IDI, RSUD, dll).
-4. issueDate: Tanggal diterbitkan dalam format YYYY-MM-DD (jika tidak tertera jelas, gunakan tanggal hari ini atau tahun tertera).
-5. expiryDate: Tanggal kadaluarsa atau masa berlaku dalam format YYYY-MM-DD jika tertulis, atau kosongkan "" jika seumur hidup / tidak ada.
-6. credentialId: Nomor sertifikat/nomor registrasi/SKP jika ada.
-7. category: Pilih salah satu nilai tepat: ["Pelatihan", "Workshop", "Prestasi", "Penghargaan", "Akademik", "Kelulusan", "Lainnya"].`;
+    // Retrieve active list of categories from DB so Gemini selects accurately
+    const currentCategories = getCategoriesFromDB();
+    const categoryNames = currentCategories.map(c => c.name);
+    const categoryOptionsStr = categoryNames.length > 0
+      ? categoryNames.join('", "')
+      : 'Pelatihan", "Workshop", "Prestasi", "Penghargaan", "Akademik", "Kelulusan", "Lainnya';
+
+    const prompt = `Anda adalah sistem OCR dan analisis AI cerdas untuk pembacaan sertifikat profesional (terutama sertifikat medis/diklat rumah sakit, pelatihan klinis, sertifikasi keahlian, seminar, dan workshop).
+Baca dan teliti seluruh teks, kop instansi, nama kegiatan/topik pelatihan, nama peserta, nomor sertifikat, tanda tangan, tanggal, dan isi materi dari berkas dokumen/gambar sertifikat ini (nama file: "${fileName}").
+
+Tugas Anda adalah mengekstrak data dan memberikan saran cerdas dalam format JSON:
+1. recipientName: Nama lengkap orang/peserta penerima sertifikat. Wajib menyertakan gelar dokter/perawat/akademik/profesi jika tertulis (contoh: "dr. Muhammad Rizky, Sp.A", "Ns. Siti Aminah, S.Kep", "Apt. Ahmad Fauzi, S.Farm").
+2. title: Nama lengkap atau judul resmi kegiatan, pelatihan, keahlian, webinar, simposium, atau kursus (contoh: "Pelatihan Bantuan Hidup Dasar (BHD) & Resusitasi Jantung Paru").
+3. issuer: Nama instansi, kementerian, perhimpunan profesi, atau badan yang menerbitkan sertifikat (contoh: "Kementerian Kesehatan RI", "PPNI", "IDI", "RSUD dr. H. Jusuf SK", "HIPKABI", dll).
+4. issueDate: Tanggal pelaksanaan/diterbitkannya sertifikat dalam format YYYY-MM-DD (jika tidak lengkap, gunakan tahun yang tertera atau tanggal saat ini).
+5. expiryDate: Tanggal masa berlaku atau kadaluarsa (format YYYY-MM-DD) jika tertera, atau kosongkan "" jika seumur hidup / tidak disebutkan.
+6. credentialId: Nomor register sertifikat, nomor SKP, atau nomor registrasi jika tertulis di dokumen.
+7. category: Sarankan Kategori yang paling tepat dan relevan dari daftar kategori yang tersedia: ["${categoryOptionsStr}"].
+8. suggestedTags: Hasilkan 3 sampai 6 kata kunci / tag singkat (1-3 kata per tag) dalam Bahasa Indonesia yang sangat relevan dengan topik, keahlian medis/teknis, instansi, atau materi sertifikat ini (contoh: ["BHD", "Resusitasi Jantung", "Gawat Darurat", "Kemenkes RI", "SKP PPNI"]).
+9. extractedTextSummary: Ringkasan singkat 1 kalimat isi materi dan kompetensi sertifikat ini.`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.7-flash',
@@ -506,17 +650,38 @@ Baca dan analisis dokumen/gambar sertifikat ini (nama file: "${fileName}") dan e
             issueDate: { type: Type.STRING, description: 'Tanggal terbit format YYYY-MM-DD' },
             expiryDate: { type: Type.STRING, description: 'Tanggal kadaluarsa format YYYY-MM-DD atau kosong' },
             credentialId: { type: Type.STRING, description: 'Nomor register atau nomor sertifikat' },
-            category: { type: Type.STRING, description: 'Kategori sertifikat' }
+            category: { type: Type.STRING, description: 'Kategori sertifikat yang disarankan oleh AI' },
+            suggestedTags: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: 'Daftar 3-6 tag / kata kunci relevan berdasarkan isi teks dokumen'
+            },
+            extractedTextSummary: { type: Type.STRING, description: 'Ringkasan singkat 1 kalimat isi materi sertifikat' }
           },
-          required: ['recipientName', 'title']
+          required: ['recipientName', 'title', 'category', 'suggestedTags']
         }
       }
     });
 
     const parsedJson = JSON.parse(response.text || '{}');
 
-    const validCategories = ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
-    const chosenCategory = validCategories.includes(parsedJson.category) ? parsedJson.category : fallback.category;
+    // Validate category against available categories
+    let chosenCategory = fallback.category;
+    if (parsedJson.category && typeof parsedJson.category === 'string') {
+      const match = categoryNames.find(c => c.toLowerCase() === parsedJson.category.toLowerCase().trim());
+      if (match) {
+        chosenCategory = match;
+      } else {
+        chosenCategory = parsedJson.category.trim();
+      }
+    }
+
+    let finalTags: string[] = fallback.suggestedTags;
+    if (Array.isArray(parsedJson.suggestedTags) && parsedJson.suggestedTags.length > 0) {
+      finalTags = parsedJson.suggestedTags
+        .filter((t: any) => typeof t === 'string' && t.trim().length > 0)
+        .map((t: string) => t.trim());
+    }
 
     return {
       fileName,
@@ -526,7 +691,9 @@ Baca dan analisis dokumen/gambar sertifikat ini (nama file: "${fileName}") dan e
       issueDate: (parsedJson.issueDate && /^\d{4}-\d{2}-\d{2}$/.test(parsedJson.issueDate)) ? parsedJson.issueDate : fallback.issueDate,
       expiryDate: (parsedJson.expiryDate && /^\d{4}-\d{2}-\d{2}$/.test(parsedJson.expiryDate)) ? parsedJson.expiryDate : fallback.expiryDate,
       credentialId: (parsedJson.credentialId && parsedJson.credentialId.trim()) || fallback.credentialId,
-      category: chosenCategory as any,
+      category: chosenCategory,
+      suggestedTags: finalTags,
+      extractedTextSummary: (parsedJson.extractedTextSummary && parsedJson.extractedTextSummary.trim()) || undefined,
       source: 'ai_vision'
     };
   } catch (aiErr) {
@@ -553,6 +720,219 @@ app.get('/api/config', (_req: Request, res: Response) => {
     hasAiScan: !!process.env.GEMINI_API_KEY,
     serverTime: new Date().toISOString()
   });
+});
+
+// ----------------------------------------------------
+// CATEGORY MANAGEMENT ENDPOINTS
+// ----------------------------------------------------
+
+// 1. Get all categories with usage counts
+app.get('/api/categories', (_req: Request, res: Response) => {
+  try {
+    const categories = getCategoriesFromDB();
+    const certificates = getCertificatesFromDB();
+
+    // Calculate usage count for each category
+    const categoryCounts: Record<string, number> = {};
+    certificates.forEach(c => {
+      categoryCounts[c.category] = (categoryCounts[c.category] || 0) + 1;
+    });
+
+    const enriched = categories.map(cat => ({
+      ...cat,
+      usageCount: categoryCounts[cat.name] || 0
+    }));
+
+    res.json({
+      success: true,
+      total: enriched.length,
+      data: enriched
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 2. Create new category
+app.post('/api/categories', (req: Request, res: Response) => {
+  try {
+    const { name, description, color, icon } = req.body;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nama kategori wajib diisi.'
+      });
+    }
+
+    const cleanName = name.trim();
+    const categories = getCategoriesFromDB();
+
+    // Check if category already exists (case-insensitive)
+    const exists = categories.some(c => c.name.toLowerCase() === cleanName.toLowerCase());
+    if (exists) {
+      return res.status(400).json({
+        success: false,
+        message: `Kategori "${cleanName}" sudah ada. Harap gunakan nama lain.`
+      });
+    }
+
+    const newCategory: CategoryRecord = {
+      id: `cat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: cleanName,
+      description: description ? description.trim() : undefined,
+      color: color || 'indigo',
+      icon: icon || 'Award',
+      isDefault: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    categories.push(newCategory);
+    saveCategoriesToDB(categories);
+
+    res.status(201).json({
+      success: true,
+      message: `Kategori "${cleanName}" berhasil ditambahkan.`,
+      data: newCategory
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 3. Update category
+app.put('/api/categories/:id', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, description, color, icon } = req.body;
+
+    const categories = getCategoriesFromDB();
+    const index = categories.findIndex(c => c.id === id);
+
+    if (index === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Kategori tidak ditemukan.'
+      });
+    }
+
+    const oldName = categories[index].name;
+    const newName = name && typeof name === 'string' && name.trim() ? name.trim() : oldName;
+
+    // If name changed, check uniqueness
+    if (newName.toLowerCase() !== oldName.toLowerCase()) {
+      const exists = categories.some(c => c.id !== id && c.name.toLowerCase() === newName.toLowerCase());
+      if (exists) {
+        return res.status(400).json({
+          success: false,
+          message: `Kategori "${newName}" sudah digunakan.`
+        });
+      }
+    }
+
+    const updatedCategory: CategoryRecord = {
+      ...categories[index],
+      name: newName,
+      description: description !== undefined ? (description ? description.trim() : undefined) : categories[index].description,
+      color: color || categories[index].color,
+      icon: icon || categories[index].icon,
+      updatedAt: new Date().toISOString()
+    };
+
+    categories[index] = updatedCategory;
+    saveCategoriesToDB(categories);
+
+    // If category name was renamed, automatically update existing certificates using the old name
+    if (oldName !== newName) {
+      const certs = getCertificatesFromDB();
+      let updatedCertCount = 0;
+      const updatedCerts = certs.map(cert => {
+        if (cert.category === oldName) {
+          updatedCertCount++;
+          return { ...cert, category: newName, updatedAt: new Date().toISOString() };
+        }
+        return cert;
+      });
+
+      if (updatedCertCount > 0) {
+        saveCertificatesToDB(updatedCerts);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Kategori "${newName}" berhasil diperbarui.`,
+      data: updatedCategory
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 4. Delete category
+app.delete('/api/categories/:id', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { fallbackCategory = 'Lainnya' } = req.query;
+
+    const categories = getCategoriesFromDB();
+    const target = categories.find(c => c.id === id);
+
+    if (!target) {
+      return res.status(404).json({
+        success: false,
+        message: 'Kategori tidak ditemukan.'
+      });
+    }
+
+    // Filter out target category
+    const remainingCategories = categories.filter(c => c.id !== id);
+    saveCategoriesToDB(remainingCategories);
+
+    // Reassign existing certificates that had this category to fallbackCategory
+    const certs = getCertificatesFromDB();
+    let reallocatedCount = 0;
+    const targetFallback = typeof fallbackCategory === 'string' && fallbackCategory ? fallbackCategory : 'Lainnya';
+
+    const updatedCerts = certs.map(cert => {
+      if (cert.category === target.name) {
+        reallocatedCount++;
+        return {
+          ...cert,
+          category: targetFallback,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return cert;
+    });
+
+    if (reallocatedCount > 0) {
+      saveCertificatesToDB(updatedCerts);
+    }
+
+    res.json({
+      success: true,
+      message: `Kategori "${target.name}" berhasil dihapus.${reallocatedCount > 0 ? ` Sebanyak ${reallocatedCount} sertifikat dialihkan ke kategori "${targetFallback}".` : ''}`,
+      reallocatedCount
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 5. Reset categories to default seed
+app.post('/api/categories/reset', (_req: Request, res: Response) => {
+  try {
+    saveCategoriesToDB(INITIAL_CATEGORIES);
+    res.json({
+      success: true,
+      message: 'Daftar kategori berhasil di-reset ke standar sistem.',
+      data: INITIAL_CATEGORIES
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 // Scan single file endpoint for instant OCR/AI reading
@@ -597,6 +977,74 @@ app.post('/api/certificates/scan-batch', upload.array('files', 30), async (req: 
   } catch (err: any) {
     console.error('Error in batch scan:', err);
     res.status(500).json({ success: false, message: err.message || 'Gagal memindai kumpulan dokumen sertifikat.' });
+  }
+});
+
+// Suggest category and tags on-the-fly using Gemini AI based on certificate metadata/text
+app.post('/api/certificates/suggest-tags', async (req: Request, res: Response) => {
+  try {
+    const { title, issuer, recipientName, description, currentCategory } = req.body;
+    const ai = getGenAI();
+    const categories = getCategoriesFromDB().map(c => c.name);
+
+    if (!ai) {
+      const fallback = parseCertificateHeuristic(`${title || ''} ${recipientName || ''}`);
+      return res.json({
+        success: true,
+        category: fallback.category,
+        suggestedTags: fallback.suggestedTags,
+        source: 'heuristic'
+      });
+    }
+
+    const categoryListStr = categories.map(c => `"${c}"`).join(', ');
+    const prompt = `Anda adalah asisten cerdas sistem sertifikasi Diklat Rumah Sakit.
+Berdasarkan data sertifikat berikut:
+- Judul Kegiatan: "${title || '-'}"
+- Nama Penerima: "${recipientName || '-'}"
+- Penyelenggara/Penerbit: "${issuer || '-'}"
+- Kategori Saat Ini: "${currentCategory || '-'}"
+- Keterangan Tambahan: "${description || '-'}"
+
+Tugas Anda:
+1. Pilih satu Kategori yang paling sesuai dan akurat dari daftar kategori resmi: [${categoryListStr}].
+2. Buat 4 sampai 6 tag / kata kunci relevan dalam Bahasa Indonesia (contoh: "BHD", "Resusitasi Jantung", "Gawat Darurat", "Kemenkes RI", "SKP PPNI").
+3. Tuliskan 1 kalimat ringkasan singkat kompetensi.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            category: { type: Type.STRING, description: 'Kategori sertifikat yang disarankan' },
+            suggestedTags: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: '4-6 tag kata kunci relevan'
+            },
+            summary: { type: Type.STRING, description: 'Ringkasan kompetensi 1 kalimat' }
+          },
+          required: ['category', 'suggestedTags']
+        }
+      }
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    const matchedCategory = categories.find(c => c.toLowerCase() === (parsed.category || '').toLowerCase().trim()) || parsed.category || currentCategory || 'Pelatihan';
+
+    res.json({
+      success: true,
+      category: matchedCategory,
+      suggestedTags: Array.isArray(parsed.suggestedTags) && parsed.suggestedTags.length > 0 ? parsed.suggestedTags : ['Pelatihan', 'Diklat RSUD'],
+      summary: parsed.summary,
+      source: 'ai_gemini'
+    });
+  } catch (err: any) {
+    console.error('Error suggesting tags/category:', err);
+    res.status(500).json({ success: false, message: err.message || 'Gagal menghasilkan saran tag & kategori.' });
   }
 });
 
