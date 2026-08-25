@@ -98,6 +98,7 @@ export const PrintCertificateModal: React.FC<PrintCertificateModalProps> = ({
       <AnimatePresence>
         {isOpen && (
           <motion.div 
+            key="modal-print-cert-backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -105,6 +106,7 @@ export const PrintCertificateModal: React.FC<PrintCertificateModalProps> = ({
             className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 transition-colors no-print"
           >
             <motion.div 
+              key="modal-print-cert-card"
               initial={{ opacity: 0, scale: 0.96, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 16 }}

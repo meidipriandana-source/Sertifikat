@@ -42,6 +42,8 @@ export interface Certificate {
 
 export type ExpiryStatus = 'lifetime' | 'valid' | 'expiring_soon' | 'expired';
 
+export type ThemeMode = 'light' | 'dark' | 'auto';
+
 export interface CertificateStats {
   totalCertificates: number;
   totalRecipients: number;

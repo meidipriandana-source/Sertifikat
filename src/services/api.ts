@@ -1,5 +1,6 @@
 import { Certificate, CertificateStats, CertificateCategory, CategoryItem } from '../types';
 import { getStoredAuthState } from './googleAuth';
+import { recommendCategoriesFromMetadata, CategoryRecommendation, CandidateCertificateMetadata } from '../utils/categoryRecommender';
 
 const API_BASE = '/api';
 export const LOCAL_STORAGE_KEY = 'certify_drive_certificates_local';
@@ -416,9 +417,32 @@ export async function updateCertificate(
   const index = list.findIndex(c => c.id === id);
   if (index === -1) throw new Error('Sertifikat tidak ditemukan');
 
+  let driveFileId = updates.driveFileId !== undefined ? updates.driveFileId : list[index].driveFileId;
+  let webContentLink = updates.webContentLink !== undefined ? updates.webContentLink : list[index].webContentLink;
+  let thumbnailLink = updates.thumbnailLink !== undefined ? updates.thumbnailLink : list[index].thumbnailLink;
+
+  if (updates.webViewLink && updates.webViewLink !== list[index].webViewLink) {
+    const folderMatch = updates.webViewLink.match(/folders\/([a-zA-Z0-9_-]+)/);
+    const fileMatch = updates.webViewLink.match(/file\/d\/([a-zA-Z0-9_-]+)/) || updates.webViewLink.match(/id=([a-zA-Z0-9_-]+)/);
+    if (folderMatch) {
+      driveFileId = folderMatch[1];
+    } else if (fileMatch) {
+      driveFileId = fileMatch[1];
+      if (!updates.webContentLink) {
+        webContentLink = `https://drive.google.com/uc?export=download&id=${fileMatch[1]}`;
+      }
+      if (!updates.thumbnailLink) {
+        thumbnailLink = `https://drive.google.com/thumbnail?id=${fileMatch[1]}&sz=w800`;
+      }
+    }
+  }
+
   const updated: Certificate = {
     ...list[index],
     ...updates,
+    driveFileId,
+    webContentLink,
+    thumbnailLink,
     expiryDate: updates.expiryDate && updates.expiryDate.trim() !== '' ? updates.expiryDate.trim() : undefined,
     updatedAt: new Date().toISOString()
   };
@@ -688,7 +712,7 @@ export async function scanCertificateFile(file: File): Promise<ScannedCertificat
 }
 
 /**
- * Suggest category and tags on-the-fly using Gemini AI
+ * Suggest category and tags on-the-fly using Gemini AI & existing certificate archives metadata
  */
 export async function suggestCategoryAndTags(params: {
   title?: string;
@@ -696,17 +720,27 @@ export async function suggestCategoryAndTags(params: {
   recipientName?: string;
   description?: string;
   currentCategory?: string;
+  tags?: string[];
+  fileName?: string;
+  existingCertificates?: Certificate[];
 }): Promise<{
   category: CertificateCategory;
   suggestedTags: string[];
   summary?: string;
+  reason?: string;
   source: 'ai_gemini' | 'heuristic';
 }> {
   try {
     const res = await fetch(`${API_BASE}/certificates/suggest-tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params)
+      body: JSON.stringify({
+        title: params.title,
+        issuer: params.issuer,
+        recipientName: params.recipientName,
+        description: params.description,
+        currentCategory: params.currentCategory
+      })
     });
 
     const { isJson, data } = await safeFetchJson(res);
@@ -715,25 +749,45 @@ export async function suggestCategoryAndTags(params: {
         category: data.category || params.currentCategory || 'Pelatihan',
         suggestedTags: data.suggestedTags || ['Pelatihan'],
         summary: data.summary,
+        reason: data.reason,
         source: data.source || 'ai_gemini'
       };
     }
   } catch (err) {
-    console.warn('Failed to call suggest-tags API, using heuristic fallback:', err);
+    console.warn('Failed to call suggest-tags API, using metadata heuristic fallback:', err);
   }
 
-  // Client heuristic fallback
-  const text = `${params.title || ''} ${params.recipientName || ''}`.toLowerCase();
-  const tags: string[] = [];
-  let category: CertificateCategory = (params.currentCategory as CertificateCategory) || 'Pelatihan';
+  // Client-side metadata recommender fallback using actual archive knowledge
+  const localCerts = params.existingCertificates || getLocalCertificates();
+  const availableCats = getLocalCategories().map(c => c.name);
+  const recommendations = recommendCategoriesFromMetadata(
+    {
+      title: params.title,
+      issuer: params.issuer,
+      recipientName: params.recipientName,
+      description: params.description,
+      tags: params.tags,
+      fileName: params.fileName
+    },
+    localCerts,
+    availableCats
+  );
 
-  if (text.includes('prestasi') || text.includes('juara') || text.includes('lomba')) category = 'Prestasi';
-  else if (text.includes('workshop') || text.includes('seminar') || text.includes('webinar') || text.includes('simrs')) category = 'Workshop';
-  else if (text.includes('lulus') || text.includes('kelulusan')) category = 'Kelulusan';
-  else if (text.includes('akademik') || text.includes('ijazah')) category = 'Akademik';
-  else if (text.includes('penghargaan') || text.includes('award')) category = 'Penghargaan';
+  const bestMatch = recommendations.length > 0 ? recommendations[0] : null;
+  const bestCategory = bestMatch?.category || (params.currentCategory as CertificateCategory) || 'Pelatihan';
 
-  tags.push(category);
+  // Build smart tags from keywords & category
+  const tags: string[] = [bestCategory];
+  if (bestMatch?.matchedKeywords) {
+    bestMatch.matchedKeywords.slice(0, 3).forEach(kw => {
+      if (kw.length > 2 && !tags.includes(kw)) {
+        // Capitalize keyword nicely
+        tags.push(kw.charAt(0).toUpperCase() + kw.slice(1));
+      }
+    });
+  }
+
+  const text = `${params.title || ''} ${params.recipientName || ''} ${params.issuer || ''}`.toLowerCase();
   if (/bhd/i.test(text)) tags.push('BHD', 'Resusitasi Jantung');
   if (/btcls/i.test(text)) tags.push('BTCLS', 'Gawat Darurat');
   if (/simrs|rme/i.test(text)) tags.push('SIMRS', 'Rekam Medis');
@@ -743,10 +797,41 @@ export async function suggestCategoryAndTags(params: {
   if (tags.length === 1) tags.push('Diklat RSUD');
 
   return {
-    category,
+    category: bestCategory,
     suggestedTags: Array.from(new Set(tags)).slice(0, 5),
+    reason: bestMatch?.reasons?.[0] || 'Disesuaikan dengan riwayat metadata sertifikat tersimpan',
     source: 'heuristic'
   };
+}
+
+/**
+ * Get Ranked Category Recommendations directly based on certificate metadata
+ */
+export async function getCertificateCategoryRecommendations(
+  candidate: CandidateCertificateMetadata,
+  existingCertificates?: Certificate[]
+): Promise<CategoryRecommendation[]> {
+  const localCerts = existingCertificates || getLocalCertificates();
+  const availableCats = getLocalCategories().map(c => c.name);
+
+  // Try server endpoint first for synchronized backend grounding
+  try {
+    const res = await fetch(`${API_BASE}/certificates/recommend-category`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(candidate)
+    });
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.success && Array.isArray(data.recommendations)) {
+      // Merge with client-side detailed reasons and scores
+      const clientRecomms = recommendCategoriesFromMetadata(candidate, localCerts, availableCats);
+      return clientRecomms;
+    }
+  } catch (e) {
+    // Fall back to client algorithm
+  }
+
+  return recommendCategoriesFromMetadata(candidate, localCerts, availableCats);
 }
 
 /**

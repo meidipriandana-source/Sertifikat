@@ -128,6 +128,7 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div 
+          key="modal-expiry-monitor-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -135,6 +136,7 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
           className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
         >
           <motion.div 
+            key="modal-expiry-monitor-card"
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}

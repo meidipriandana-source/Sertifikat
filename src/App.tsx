@@ -5,7 +5,7 @@ import {
 import { 
   getStoredAuthState, GoogleAuthState 
 } from './services/googleAuth';
-import { Certificate, CertificateStats, CategoryItem } from './types';
+import { Certificate, CertificateStats, CategoryItem, ThemeMode } from './types';
 import { Header } from './components/Header';
 import { DashboardStats } from './components/DashboardStats';
 import { CertificateList } from './components/CertificateList';
@@ -16,9 +16,12 @@ import { GoogleConnectModal } from './components/GoogleConnectModal';
 import { ExportModal } from './components/ExportModal';
 import { RestoreModal } from './components/RestoreModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { BulkDeleteConfirmModal } from './components/BulkDeleteConfirmModal';
 import { ExpiryAlertBanner } from './components/ExpiryAlertBanner';
 import { ExpiryMonitorModal } from './components/ExpiryMonitorModal';
 import { CategoryManagerModal } from './components/CategoryManagerModal';
+import { ImageLightboxModal } from './components/ImageLightboxModal';
+import { RecentlyUploadedWidget } from './components/RecentlyUploadedWidget';
 import { getExpirySummary } from './utils/expiry';
 import { Cloud, CheckCircle2, AlertCircle, Sparkles, Folder, ExternalLink, BellRing, WifiOff, RefreshCw, Database, Plus, X, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
@@ -42,6 +45,7 @@ export default function App() {
 
   // Modals & Selection
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null);
+  const [lightboxCertificate, setLightboxCertificate] = useState<Certificate | null>(null);
   const [certificateToDelete, setCertificateToDelete] = useState<Certificate | null>(null);
   const [certificatesToDelete, setCertificatesToDelete] = useState<Certificate[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -82,26 +86,76 @@ export default function App() {
   const [authState, setAuthState] = useState<GoogleAuthState>(getStoredAuthState());
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Dark Mode
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem('certify_drive_dark_mode');
-    if (saved !== null) {
-      return saved === 'true';
+  // Theme Mode ('light' | 'dark' | 'auto')
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('certify_drive_theme_mode');
+    if (saved === 'light' || saved === 'dark' || saved === 'auto') {
+      return saved;
     }
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    // Backward compatibility for old boolean dark mode storage
+    const legacySavedDark = localStorage.getItem('certify_drive_dark_mode');
+    if (legacySavedDark !== null) {
+      return legacySavedDark === 'true' ? 'dark' : 'light';
+    }
+    return 'auto';
   });
 
+  // Track system preference
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false;
+  });
+
+  // Listen to OS system theme changes in real-time
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    const handleChange = (e: MediaQueryListEvent) => {
+      setSystemPrefersDark(e.matches);
+    };
+
+    // Modern and fallback event listener
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleChange);
+    } else {
+      mediaQuery.addListener(handleChange);
+    }
+
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleChange);
+      } else {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, []);
+
+  // Compute effective dark mode state
+  const isDarkMode = themeMode === 'auto' ? systemPrefersDark : themeMode === 'dark';
+
+  // Apply dark class to document root & persist choice
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
+    localStorage.setItem('certify_drive_theme_mode', themeMode);
     localStorage.setItem('certify_drive_dark_mode', String(isDarkMode));
-  }, [isDarkMode]);
+  }, [isDarkMode, themeMode]);
 
-  const handleToggleDarkMode = () => {
-    setIsDarkMode(prev => !prev);
+  const handleSetThemeMode = (mode: ThemeMode) => {
+    setThemeMode(mode);
+    if (mode === 'auto') {
+      const currentOsMode = systemPrefersDark ? 'Gelap' : 'Terang';
+      showToast(`Tema Otomatis aktif (Menyesuaikan sistem: Mode ${currentOsMode})`, 'info');
+    } else if (mode === 'dark') {
+      showToast('Mode Gelap diaktifkan', 'info');
+    } else {
+      showToast('Mode Terang diaktifkan', 'info');
+    }
   };
 
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -290,8 +344,9 @@ export default function App() {
         urgentExpiryCount={expirySummary.totalUrgent}
         onRefresh={loadData}
         isLoading={isLoading}
+        themeMode={themeMode}
         isDarkMode={isDarkMode}
-        onToggleDarkMode={handleToggleDarkMode}
+        onSetThemeMode={handleSetThemeMode}
         isOnline={isOnline}
         lastCacheTime={lastSyncedAt}
       />
@@ -454,12 +509,23 @@ export default function App() {
           onOpenUpload={() => setIsUploadOpen(true)}
         />
 
+        {/* Recently Uploaded Horizontal Strip Widget (Last 5 Uploaded Certificates) */}
+        <RecentlyUploadedWidget
+          certificates={certificates}
+          categoriesList={categoriesList}
+          onSelectCertificate={setSelectedCertificate}
+          onOpenLightbox={(cert) => setLightboxCertificate(cert)}
+          onOpenUpload={() => setIsUploadOpen(true)}
+        />
+
         {/* Certificate List (Grid & Table) */}
         <CertificateList
           certificates={certificates}
           onSelectCertificate={setSelectedCertificate}
+          onOpenLightbox={(cert) => setLightboxCertificate(cert)}
           onDeleteCertificate={handleRequestDelete}
           onDeleteMultipleCertificates={handleRequestDeleteMultiple}
+          onUpdateCertificate={handleUpdateCertificate}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           sortBy={sortBy}
@@ -480,6 +546,15 @@ export default function App() {
           onOpenExpiryMonitor={() => setIsExpiryMonitorOpen(true)}
           categoriesList={categoriesList}
           onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
+          selectedCategory={selectedCategory}
+          onCategoryChange={setSelectedCategory}
+          onResetAllFilters={() => {
+            setSearchQuery('');
+            setSelectedCategory('all');
+            setStartDate('');
+            setEndDate('');
+            setExpiryFilter('all');
+          }}
         />
 
       </main>
@@ -535,6 +610,7 @@ export default function App() {
         authState={authState}
         onOpenGoogleConnect={() => setIsGoogleConnectOpen(true)}
         categoriesList={categoriesList}
+        certificates={certificates}
         onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
       />
 
@@ -543,29 +619,54 @@ export default function App() {
         onClose={() => setSelectedCertificate(null)}
         onUpdate={handleUpdateCertificate}
         onDelete={handleRequestDelete}
+        onOpenLightbox={(cert) => setLightboxCertificate(cert)}
         categoriesList={categoriesList}
         isOnline={isOnline}
+      />
+
+      {/* Fullscreen Image Lightbox Modal */}
+      <ImageLightboxModal
+        certificate={lightboxCertificate}
+        onClose={() => setLightboxCertificate(null)}
+        certificates={certificates}
+        onSelectCertificate={(cert) => setLightboxCertificate(cert)}
       />
 
       <CategoryManagerModal
         isOpen={isCategoryManagerOpen}
         onClose={() => setIsCategoryManagerOpen(false)}
+        categories={categoriesList}
+        certificates={certificates}
+        onCategoriesChange={() => {
+          loadCategories();
+          loadData();
+        }}
         onCategoriesChanged={() => {
           loadCategories();
           loadData();
         }}
       />
 
+      {/* Single Certificate Deletion Modal */}
       <DeleteConfirmModal
-        isOpen={Boolean(certificateToDelete) || certificatesToDelete.length > 0}
-        onClose={() => {
-          setCertificateToDelete(null);
-          setCertificatesToDelete([]);
-        }}
+        isOpen={Boolean(certificateToDelete) && certificatesToDelete.length === 0}
+        onClose={() => setCertificateToDelete(null)}
         certificate={certificateToDelete}
+        onConfirmDelete={handleConfirmDeleteBatch}
+        isDeleting={isDeleting}
+      />
+
+      {/* Dedicated Bulk Deletion Confirmation Modal with Rich Statistics Breakdown */}
+      <BulkDeleteConfirmModal
+        isOpen={certificatesToDelete.length > 0}
+        onClose={() => setCertificatesToDelete([])}
         certificates={certificatesToDelete}
         onConfirmDelete={handleConfirmDeleteBatch}
         isDeleting={isDeleting}
+        categoriesList={categoriesList}
+        onRemoveFromQueue={(certId) => {
+          setCertificatesToDelete(prev => prev.filter(c => c.id !== certId));
+        }}
       />
 
       <IntegrationGuideModal

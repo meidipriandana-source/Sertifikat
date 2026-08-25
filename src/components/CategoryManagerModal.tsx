@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, Plus, Edit2, Trash2, RotateCcw, Check, Sparkles, FolderKanban, 
   Tag, Info, AlertTriangle, CheckCircle2, ChevronRight, Hash, Layers
@@ -20,9 +21,10 @@ import {
 interface CategoryManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  categories: CategoryItem[];
-  certificates: Certificate[];
-  onCategoriesChange: () => void;
+  categories?: CategoryItem[];
+  certificates?: Certificate[];
+  onCategoriesChange?: () => void;
+  onCategoriesChanged?: () => void;
   onSelectCategoryFilter?: (categoryName: string) => void;
 }
 
@@ -32,6 +34,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   categories = [],
   certificates = [],
   onCategoriesChange,
+  onCategoriesChanged,
   onSelectCategoryFilter
 }) => {
   // Form State
@@ -50,8 +53,6 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [fallbackCategory, setFallbackCategory] = useState('Lainnya');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-
-  if (!isOpen) return null;
 
   const safeCertificates = Array.isArray(certificates) ? certificates : [];
 
@@ -124,7 +125,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
         setSuccessMsg(`Kategori baru "${categoryName.trim()}" berhasil ditambahkan!`);
       }
 
-      onCategoriesChange();
+      onCategoriesChange?.();
+      onCategoriesChanged?.();
       setIsEditing(false);
       setEditingId(null);
       setTimeout(() => setSuccessMsg(null), 3500);
@@ -142,7 +144,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
       const res = await deleteCategory(deletingCategory.id, fallbackCategory);
       setSuccessMsg(res.message || `Kategori "${deletingCategory.name}" berhasil dihapus.`);
       setDeletingCategory(null);
-      onCategoriesChange();
+      onCategoriesChange?.();
+      onCategoriesChanged?.();
       setTimeout(() => setSuccessMsg(null), 3500);
     } catch (err: any) {
       alert(`Gagal menghapus kategori: ${err.message}`);
@@ -161,7 +164,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
       setIsResetting(true);
       await resetCategories();
       setSuccessMsg('Kategori berhasil di-reset ke standar sistem.');
-      onCategoriesChange();
+      onCategoriesChange?.();
+      onCategoriesChanged?.();
       setTimeout(() => setSuccessMsg(null), 3500);
     } catch (err: any) {
       alert(`Gagal me-reset kategori: ${err.message}`);
@@ -174,11 +178,25 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const PreviewIconComponent = getCategoryIcon(selectedIcon);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
-      <div 
-        id="category-manager-modal" 
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-colors"
-      >
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          key="modal-category-manager-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-xs overflow-y-auto"
+        >
+          <motion.div 
+            key="modal-category-manager-card"
+            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            id="category-manager-modal" 
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-colors"
+          >
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-850/50 shrink-0">
           <div className="flex items-center gap-3">
@@ -584,9 +602,11 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
               </div>
             </div>
           </div>
-        )}
+            )}
 
-      </div>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };

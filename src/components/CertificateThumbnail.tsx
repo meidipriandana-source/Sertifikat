@@ -4,12 +4,15 @@ import {
   ExternalLink, CheckCircle2, ShieldCheck, Eye
 } from 'lucide-react';
 import { Certificate } from '../types';
+import { HighlightedText } from './HighlightedText';
 
 interface CertificateThumbnailProps {
   certificate: Certificate;
   size?: 'table' | 'grid' | 'large';
   onClick?: () => void;
+  onOpenLightbox?: (cert: Certificate) => void;
   showHoverZoom?: boolean;
+  searchQuery?: string;
   className?: string;
 }
 
@@ -80,7 +83,9 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
   certificate,
   size = 'table',
   onClick,
+  onOpenLightbox,
   showHoverZoom = true,
+  searchQuery = '',
   className = ''
 }) => {
   const [imageError, setImageError] = useState(false);
@@ -113,6 +118,15 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
     }
   };
 
+  const handleMainClick = (e: React.MouseEvent) => {
+    if (onOpenLightbox) {
+      e.stopPropagation();
+      onOpenLightbox(certificate);
+    } else if (onClick) {
+      onClick();
+    }
+  };
+
   // Sizing definitions
   const sizeClasses = {
     table: 'w-20 h-14 min-w-[5rem]',
@@ -128,7 +142,8 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
     >
       {/* Main Thumbnail Container */}
       <div 
-        onClick={onClick}
+        onClick={handleMainClick}
+        title="Klik untuk perbesar dokumen layar penuh (Lightbox)"
         className={`${sizeClasses} rounded-xl overflow-hidden border border-slate-200/90 dark:border-slate-700/80 shadow-2xs bg-slate-100 dark:bg-slate-850 cursor-pointer relative transition-all duration-200 group-hover:border-indigo-400 dark:group-hover:border-indigo-500 group-hover:shadow-md`}
       >
         {/* Attempt to load image if available and not erroring */}
@@ -200,11 +215,16 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
           </div>
         )}
 
-        {/* Hover Overlay Button */}
-        <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-2xs opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center gap-1 text-white">
-          <div className="w-6 h-6 rounded-full bg-white/90 dark:bg-slate-900/90 text-slate-900 dark:text-white flex items-center justify-center shadow-md transform scale-75 group-hover:scale-100 transition-transform">
-            <Eye className="w-3.5 h-3.5" />
+        {/* Hover Overlay Button with ZoomIn indicator */}
+        <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-2xs opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center gap-1.5 text-white">
+          <div className="w-7 h-7 rounded-full bg-white/95 dark:bg-slate-900/95 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-md transform scale-75 group-hover:scale-100 transition-transform">
+            <ZoomIn className="w-4 h-4 stroke-[2.5]" />
           </div>
+          {size !== 'table' && (
+            <span className="text-[10px] font-bold text-white bg-slate-900/80 px-2 py-0.5 rounded-full shadow-xs">
+              Perbesar
+            </span>
+          )}
         </div>
 
         {/* Format Corner Indicator (Always visible for clarity) */}
@@ -228,11 +248,11 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
             {/* Header with status */}
             <div className="flex items-start justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
               <div className="min-w-0">
-                <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
-                  Pratinjau Dokumen
+                <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1">
+                  <ZoomIn className="w-3 h-3" /> Pratinjau Dokumen
                 </span>
                 <p className="text-xs font-bold text-slate-900 dark:text-white truncate mt-0.5">
-                  {certificate.title}
+                  <HighlightedText text={certificate.title} query={searchQuery} />
                 </p>
               </div>
               <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${
@@ -246,10 +266,10 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
             <div className={`w-full h-28 rounded-xl p-3 flex flex-col justify-between bg-gradient-to-br ${categoryStyle.bg} border ${categoryStyle.border} relative overflow-hidden shadow-inner`}>
               <div className="flex items-center justify-between">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  {certificate.category}
+                  <HighlightedText text={certificate.category} query={searchQuery} />
                 </span>
                 <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400">
-                  ID: {certificate.credentialId || 'Auto'}
+                  ID: <HighlightedText text={certificate.credentialId || 'Auto'} query={searchQuery} />
                 </span>
               </div>
               
@@ -258,12 +278,14 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
                   Diberikan Kepada:
                 </p>
                 <p className="text-xs font-bold text-slate-900 dark:text-white font-serif">
-                  {certificate.recipientName}
+                  <HighlightedText text={certificate.recipientName} query={searchQuery} />
                 </p>
               </div>
 
               <div className="flex items-center justify-between text-[9px] text-slate-600 dark:text-slate-400">
-                <span className="truncate max-w-[140px]">{certificate.issuer}</span>
+                <span className="truncate max-w-[140px]">
+                  <HighlightedText text={certificate.issuer} query={searchQuery} />
+                </span>
                 <span>{certificate.issueDate}</span>
               </div>
             </div>
@@ -284,8 +306,8 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
               </div>
             </div>
 
-            <div className="text-[9px] text-center text-slate-400 dark:text-slate-500 italic pt-1 border-t border-slate-100 dark:border-slate-800">
-              Klik untuk membuka detail lengkap & verifikasi QR
+            <div className="text-[9px] text-center text-indigo-600 dark:text-indigo-400 font-semibold pt-1 border-t border-slate-100 dark:border-slate-800 flex items-center justify-center gap-1">
+              <ZoomIn className="w-3 h-3" /> Klik thumbnail untuk perbesar layar penuh (Lightbox)
             </div>
 
           </div>
@@ -294,3 +316,4 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
     </div>
   );
 };
+

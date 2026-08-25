@@ -213,6 +213,7 @@ app.listen(3000, () => console.log('Server berjalan di port 3000'));`;
     <AnimatePresence>
       {isOpen && (
         <motion.div 
+          key="modal-integration-guide-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -220,6 +221,7 @@ app.listen(3000, () => console.log('Server berjalan di port 3000'));`;
           className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
         >
           <motion.div 
+            key="modal-integration-guide-card"
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
@@ -260,12 +262,12 @@ app.listen(3000, () => console.log('Server berjalan di port 3000'));`;
             { id: 'backend', label: '3. Kode Backend (Node/Express)', icon: Server },
             { id: 'frontend', label: '4. Kode Frontend', icon: Layout },
             { id: 'security', label: '5. Keamanan & Best Practice', icon: ShieldCheck }
-          ].map((tab) => {
+          ].map((tab, tabIdx) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
               <button
-                key={tab.id}
+                key={`guide-tab-${tab.id}-${tabIdx}`}
                 type="button"
                 onClick={() => setActiveTab(tab.id as any)}
                 className={`flex items-center gap-2 px-4 py-3.5 text-xs font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${

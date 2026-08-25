@@ -85,6 +85,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div 
+          key="modal-export-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -92,6 +93,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
         >
           <motion.div 
+            key="modal-export-card"
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}

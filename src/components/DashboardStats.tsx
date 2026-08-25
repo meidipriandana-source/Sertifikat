@@ -61,30 +61,34 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const expiredCerts = safeCertificates.filter(c => getExpiryDetails(c.expiryDate).status === 'expired');
 
   // Build dynamic categories list (Semua + all custom/system categories + any uncategorized names in certificates)
-  const categoryNamesSet = new Set<string>();
+  const categoryNamesMap = new Map<string, string>();
   safeCategoriesList.forEach(c => {
-    if (c?.name && c.name.trim().toLowerCase() !== 'semua') {
-      categoryNamesSet.add(c.name.trim());
+    const trimmed = (c?.name || '').trim();
+    if (trimmed && trimmed.toLowerCase() !== 'semua' && !categoryNamesMap.has(trimmed.toLowerCase())) {
+      categoryNamesMap.set(trimmed.toLowerCase(), trimmed);
     }
   });
   safeCertificates.forEach(c => {
-    if (c?.category && c.category.trim().toLowerCase() !== 'semua') {
-      categoryNamesSet.add(c.category.trim());
+    const trimmed = (c?.category || '').trim();
+    if (trimmed && trimmed.toLowerCase() !== 'semua' && !categoryNamesMap.has(trimmed.toLowerCase())) {
+      categoryNamesMap.set(trimmed.toLowerCase(), trimmed);
     }
   });
 
-  const categories = ['Semua', ...Array.from(categoryNamesSet)];
+  const categories = ['Semua', ...Array.from(categoryNamesMap.values())];
 
   // Donut chart calculations: Distribution by Category
-  const categoryDistRaw: { name: string; count: number; colorHex: string }[] = [];
+  const categoryDistMap = new Map<string, { name: string; count: number; colorHex: string }>();
   const predefinedColors = ['#6366f1', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6', '#14b8a6'];
 
   safeCategoriesList.forEach((cat, index) => {
     if (!cat?.name) return;
-    const count = safeCertificates.filter(c => c.category === cat.name).length;
+    const catName = cat.name.trim();
+    if (!catName || categoryDistMap.has(catName.toLowerCase())) return;
+    const count = safeCertificates.filter(c => (c?.category || '').trim().toLowerCase() === catName.toLowerCase()).length;
     if (count > 0) {
-      categoryDistRaw.push({
-        name: cat.name,
+      categoryDistMap.set(catName.toLowerCase(), {
+        name: catName,
         count,
         colorHex: COLOR_PALETTE_HEX[cat.color] || predefinedColors[index % predefinedColors.length]
       });
@@ -93,14 +97,20 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Check any certificates in categories not in categoriesList
   safeCertificates.forEach(c => {
-    if (c?.category && !categoryDistRaw.some(item => item.name === c.category)) {
-      categoryDistRaw.push({
-        name: c.category,
-        count: safeCertificates.filter(item => item.category === c.category).length,
-        colorHex: '#64748b'
-      });
+    if (c?.category) {
+      const catName = c.category.trim();
+      if (catName && !categoryDistMap.has(catName.toLowerCase())) {
+        const count = safeCertificates.filter(item => (item?.category || '').trim().toLowerCase() === catName.toLowerCase()).length;
+        categoryDistMap.set(catName.toLowerCase(), {
+          name: catName,
+          count,
+          colorHex: '#64748b'
+        });
+      }
     }
   });
+
+  const categoryDistRaw = Array.from(categoryDistMap.values());
 
   const totalCategorized = categoryDistRaw.reduce((acc, curr) => acc + curr.count, 0);
 

@@ -1,9 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, UploadCloud, FileText, Image as ImageIcon, CheckCircle, 
   AlertCircle, Cloud, Sparkles, Calendar, User, Tag, Building2, Hash, Clock,
-  Files, CheckSquare, Layers, Plus, Trash2, Wand2, Loader2, Scan, RefreshCw, Check
+  Files, CheckSquare, Layers, Plus, Trash2, Wand2, Loader2, Scan, RefreshCw, Check, Lightbulb, Info
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { 
@@ -17,6 +17,7 @@ import {
 } from '../services/api';
 import { GoogleAuthState } from '../services/googleAuth';
 import { Certificate, CertificateCategory, CategoryItem } from '../types';
+import { recommendCategoriesFromMetadata, CategoryRecommendation } from '../utils/categoryRecommender';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
 import { BatchUploadProgressBar, BatchUploadProgressState } from './BatchUploadProgressBar';
 
@@ -28,6 +29,7 @@ interface CertificateUploadModalProps {
   authState: GoogleAuthState;
   onOpenGoogleConnect: () => void;
   categoriesList?: CategoryItem[];
+  certificates?: Certificate[];
   onOpenCategoryManager?: () => void;
 }
 
@@ -54,17 +56,23 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   authState,
   onOpenGoogleConnect,
   categoriesList = [],
+  certificates = [],
   onOpenCategoryManager
 }) => {
   const [uploadMode, setUploadMode] = useState<'single' | 'batch'>('single');
   
-  // Available category names (guaranteed unique)
-  const availableCategories = Array.from(new Set(
-    (categoriesList.length > 0 
-      ? categoriesList.map(c => c.name)
-      : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya']
-    ).map(s => (s || '').trim()).filter(Boolean)
-  ));
+  // Available category names (guaranteed case-insensitively unique)
+  const categoryMap = new Map<string, string>();
+  const rawList = categoriesList.length > 0 
+    ? categoriesList.map(c => c.name)
+    : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
+  rawList.forEach(s => {
+    const trimmed = (s || '').trim();
+    if (trimmed && !categoryMap.has(trimmed.toLowerCase())) {
+      categoryMap.set(trimmed.toLowerCase(), trimmed);
+    }
+  });
+  const availableCategories = Array.from(categoryMap.values());
 
   // Single upload states
   const [title, setTitle] = useState('');
@@ -107,6 +115,40 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Compute intelligent real-time category recommendations based on current form metadata and archive history
+  const singleCategoryRecommendations = useMemo(() => {
+    return recommendCategoriesFromMetadata(
+      {
+        title,
+        issuer,
+        recipientName,
+        description,
+        tags,
+        fileName: file?.name,
+        extractedTextSummary: aiExtractedSummary || undefined
+      },
+      certificates,
+      availableCategories
+    );
+  }, [title, issuer, recipientName, description, tags, file?.name, aiExtractedSummary, certificates, availableCategories]);
+
+  const topCategoryRecommendation = singleCategoryRecommendations.length > 0 ? singleCategoryRecommendations[0] : null;
+
+  // Batch common category recommendation
+  const batchCommonRecommendations = useMemo(() => {
+    return recommendCategoriesFromMetadata(
+      {
+        title: batchCommonTitle,
+        issuer: batchIssuer,
+        fileName: batchFiles.length > 0 ? batchFiles[0].file.name : undefined
+      },
+      certificates,
+      availableCategories
+    );
+  }, [batchCommonTitle, batchIssuer, batchFiles, certificates, availableCategories]);
+
+  const topBatchRecommendation = batchCommonRecommendations.length > 0 ? batchCommonRecommendations[0] : null;
+
   const handleGenerateCredentialId = () => {
     const year = issueDate ? issueDate.split('-')[0] : new Date().getFullYear().toString();
     const randomCode = Math.floor(100000 + Math.random() * 900000);
@@ -129,6 +171,27 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   const handleApplyCommonCategoryToAll = (newCat: CertificateCategory) => {
     setBatchCommonCategory(newCat);
     setBatchFiles(batchFiles.map(item => ({ ...item, category: newCat })));
+  };
+
+  const handleApplyAutoCategoryRecommendationsToAllBatch = () => {
+    setBatchFiles(prev => prev.map(item => {
+      const recomms = recommendCategoriesFromMetadata(
+        {
+          title: item.title,
+          issuer: item.issuer || batchIssuer,
+          recipientName: item.recipientName,
+          fileName: item.file.name,
+          extractedTextSummary: item.extractedTextSummary
+        },
+        certificates,
+        availableCategories
+      );
+      const best = recomms.length > 0 ? recomms[0] : null;
+      return {
+        ...item,
+        category: best && best.score >= 35 ? best.category : item.category
+      };
+    }));
   };
 
   const handleAddTag = (customTag?: string) => {
@@ -157,7 +220,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     setTags(tags.filter(t => t !== tagToRemove));
   };
 
-  // Re-request Gemini AI suggestions on demand based on current form values
+  // Re-request Gemini AI suggestions on demand based on current form values & archive metadata
   const handleTriggerAISuggestions = async () => {
     try {
       setIsRequestingAISuggestions(true);
@@ -166,7 +229,10 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
         issuer,
         recipientName,
         description,
-        currentCategory: category
+        currentCategory: category,
+        tags,
+        fileName: file?.name,
+        existingCertificates: certificates
       });
 
       if (res.category && res.category !== category) {
@@ -217,21 +283,58 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
       setPreviewUrl(null);
     }
 
-    // Heuristic pre-fill
+    // 1. Immediate Heuristic Pre-fill from Filename
     const parsed = parseCertificateItemInfo(selectedFile.name, 'Sertifikat Pelatihan', 'Staff RSUD');
-    if (!title) setTitle(parsed.title);
-    if (!recipientName && parsed.recipientName !== 'Staff RSUD') setRecipientName(parsed.recipientName);
-    setCategory(parsed.category);
+    const computedTitle = parsed.title;
+    const computedRecipient = parsed.recipientName !== 'Staff RSUD' ? parsed.recipientName : '';
+    
+    if (!title) setTitle(computedTitle);
+    if (!recipientName && computedRecipient) setRecipientName(computedRecipient);
 
-    // Run AI OCR scan
+    // 2. Immediate Metadata Category Recommendation based on file name & initial title
+    const initialRecomms = recommendCategoriesFromMetadata(
+      {
+        title: computedTitle,
+        recipientName: computedRecipient,
+        fileName: selectedFile.name
+      },
+      certificates,
+      availableCategories
+    );
+
+    if (initialRecomms.length > 0 && initialRecomms[0].score >= 35) {
+      setCategory(initialRecomms[0].category);
+    } else {
+      setCategory(parsed.category);
+    }
+
+    // 3. Run AI OCR scan and automatic Gemini metadata suggestion
     try {
       setIsScanningSingle(true);
       const scanResult = await scanCertificateFile(selectedFile);
+      
+      let finalTitle = computedTitle;
+      let finalRecipient = computedRecipient;
+      let finalIssuer = issuer;
+      let finalCategory = parsed.category;
+
       if (scanResult) {
-        if (scanResult.recipientName) setRecipientName(scanResult.recipientName);
-        if (scanResult.title) setTitle(scanResult.title);
-        if (scanResult.issuer) setIssuer(scanResult.issuer);
-        if (scanResult.category) setCategory(scanResult.category);
+        if (scanResult.recipientName) {
+          setRecipientName(scanResult.recipientName);
+          finalRecipient = scanResult.recipientName;
+        }
+        if (scanResult.title) {
+          setTitle(scanResult.title);
+          finalTitle = scanResult.title;
+        }
+        if (scanResult.issuer) {
+          setIssuer(scanResult.issuer);
+          finalIssuer = scanResult.issuer;
+        }
+        if (scanResult.category) {
+          setCategory(scanResult.category);
+          finalCategory = scanResult.category;
+        }
         if (scanResult.issueDate) setIssueDate(scanResult.issueDate);
         if (scanResult.expiryDate) {
           setExpiryDate(scanResult.expiryDate);
@@ -250,6 +353,32 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
         setSingleScanSuccess(true);
         setScanSource(scanResult.source);
       }
+
+      // 4. Automatic Category & Tag Recommendation Grounding with Gemini & Archive DB
+      try {
+        const aiSuggestion = await suggestCategoryAndTags({
+          title: finalTitle,
+          issuer: finalIssuer,
+          recipientName: finalRecipient,
+          currentCategory: finalCategory,
+          fileName: selectedFile.name,
+          existingCertificates: certificates
+        });
+
+        if (aiSuggestion.category) {
+          setCategory(aiSuggestion.category);
+        }
+        if (aiSuggestion.suggestedTags && aiSuggestion.suggestedTags.length > 0) {
+          setAiSuggestedTags(aiSuggestion.suggestedTags);
+          setTags(prev => Array.from(new Set([...prev, ...aiSuggestion.suggestedTags])));
+        }
+        if (aiSuggestion.summary && !aiExtractedSummary) {
+          setAiExtractedSummary(aiSuggestion.summary);
+        }
+      } catch (aiErr) {
+        console.warn('Auto AI category suggestion fallback:', aiErr);
+      }
+
     } catch (scanErr) {
       console.warn('AI OCR scan error on single file:', scanErr);
     } finally {
@@ -551,6 +680,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div 
+          key="modal-upload-cert-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -558,6 +688,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
           className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
         >
           <motion.div 
+            key="modal-upload-cert-card"
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
@@ -792,10 +923,10 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
               {/* Category, Issuer, Dates */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
                     <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase">
-                      Kategori
+                      Kategori <span className="text-rose-500">*</span>
                     </label>
                     {onOpenCategoryManager && (
                       <button
@@ -816,6 +947,65 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       <option key={`single-cat-${catName}-${idx}`} value={catName}>{catName}</option>
                     ))}
                   </select>
+
+                  {/* Metadata-driven quick category recommendation pills */}
+                  {singleCategoryRecommendations.length > 0 && (
+                    <div className="pt-1 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                        <span className="flex items-center gap-1 font-semibold">
+                          <Lightbulb className="w-3 h-3 text-amber-500 shrink-0" />
+                          Saran Metadata:
+                        </span>
+                        {topCategoryRecommendation && topCategoryRecommendation.category !== category && (
+                          <button
+                            type="button"
+                            onClick={() => setCategory(topCategoryRecommendation.category)}
+                            className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                          >
+                            Gunakan Saran
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-1">
+                        {singleCategoryRecommendations.slice(0, 3).map((rec, rIdx) => {
+                          const isCurrent = category === rec.category;
+                          return (
+                            <button
+                              key={`single-rec-${rec.category}-${rIdx}`}
+                              type="button"
+                              onClick={() => setCategory(rec.category)}
+                              title={rec.reasons.join(' • ')}
+                              className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-300 dark:ring-indigo-700'
+                                  : rec.score >= 60
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100'
+                                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-indigo-300'
+                              }`}
+                            >
+                              <span>{rec.category}</span>
+                              <span className={`text-[9px] px-1 rounded-full ${
+                                isCurrent 
+                                  ? 'bg-indigo-700 text-indigo-100' 
+                                  : rec.score >= 60 
+                                  ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200' 
+                                  : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                              }`}>
+                                {rec.score}%
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {topCategoryRecommendation && topCategoryRecommendation.reasons.length > 0 && (
+                        <p className="text-[9.5px] text-slate-500 dark:text-slate-400 italic line-clamp-1" title={topCategoryRecommendation.reasons.join(', ')}>
+                          💡 {topCategoryRecommendation.reasons[0]}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -942,6 +1132,36 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                     )}
                   </button>
                 </div>
+
+                {/* Top Metadata Category Match Analysis Box */}
+                {topCategoryRecommendation && (
+                  <div className="p-2.5 rounded-xl bg-white/90 dark:bg-slate-800/90 border border-indigo-100 dark:border-indigo-900/40 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                          Kategori Terpilih:
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-xs">
+                          {category}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                        {topCategoryRecommendation.score}% Relevansi Metadata
+                      </span>
+                    </div>
+
+                    {topCategoryRecommendation.reasons.length > 0 && (
+                      <div className="text-[10.5px] text-slate-600 dark:text-slate-300 space-y-0.5">
+                        {topCategoryRecommendation.reasons.map((reason, rIdx) => (
+                          <p key={`reason-line-${rIdx}`} className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                            <span>{reason}</span>
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* AI Extracted Summary (if present) */}
                 {aiExtractedSummary && (
@@ -1143,9 +1363,22 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase mb-1">
-                        Kategori
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase">
+                          Kategori Bersama
+                        </label>
+                        {topBatchRecommendation && topBatchRecommendation.category !== batchCommonCategory && (
+                          <button
+                            type="button"
+                            onClick={() => handleApplyCommonCategoryToAll(topBatchRecommendation.category)}
+                            className="text-[9.5px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                            title={`Gunakan saran kategori: ${topBatchRecommendation.category} (${topBatchRecommendation.score}% relevan)`}
+                          >
+                            <Lightbulb className="w-2.5 h-2.5 text-amber-500" />
+                            Gunakan {topBatchRecommendation.category}
+                          </button>
+                        )}
+                      </div>
                       <select
                         value={batchCommonCategory}
                         onChange={(e) => handleApplyCommonCategoryToAll(e.target.value)}
@@ -1155,6 +1388,11 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                           <option key={`batch-common-cat-${catName}-${idx}`} value={catName}>{catName}</option>
                         ))}
                       </select>
+                      {topBatchRecommendation && (
+                        <p className="text-[9px] text-slate-500 dark:text-slate-400 mt-1 truncate" title={topBatchRecommendation.reasons.join(', ')}>
+                          💡 Saran: <strong className="text-indigo-600 dark:text-indigo-400">{topBatchRecommendation.category}</strong> ({topBatchRecommendation.score}% relevan)
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1235,6 +1473,15 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                           className="px-2.5 py-1 text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
                         />
                       )}
+                      <button
+                        type="button"
+                        onClick={handleApplyAutoCategoryRecommendationsToAllBatch}
+                        className="px-2.5 py-1 text-[11px] rounded-lg bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 font-bold hover:bg-emerald-100 transition-colors flex items-center gap-1 cursor-pointer border border-emerald-200 dark:border-emerald-800/50"
+                        title="Cocokkan kategori tiap baris berkas secara otomatis berdasarkan metadata arsip"
+                      >
+                        <Wand2 className="w-3 h-3 text-emerald-600" />
+                        <span>Auto-Kategori Semua Baris</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => batchFileInputRef.current?.click()}

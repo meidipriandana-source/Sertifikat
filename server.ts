@@ -987,12 +987,13 @@ app.post('/api/certificates/scan-batch', upload.array('files', 30), async (req: 
   }
 });
 
-// Suggest category and tags on-the-fly using Gemini AI based on certificate metadata/text
+// Suggest category and tags on-the-fly using Gemini AI based on certificate metadata/text & existing certificate archives
 app.post('/api/certificates/suggest-tags', async (req: Request, res: Response) => {
   try {
     const { title, issuer, recipientName, description, currentCategory } = req.body;
     const ai = getGenAI();
     const categories = getCategoriesFromDB().map(c => c.name);
+    const existingCerts = getCertificatesFromDB();
 
     if (!ai) {
       const fallback = parseCertificateHeuristic(`${title || ''} ${recipientName || ''}`);
@@ -1004,19 +1005,31 @@ app.post('/api/certificates/suggest-tags', async (req: Request, res: Response) =
       });
     }
 
+    // Build context profile from existing certificates metadata
+    const existingSamplePatterns = categories.map(catName => {
+      const matching = existingCerts.filter(c => c.category === catName).slice(0, 4);
+      if (matching.length === 0) return null;
+      const titles = matching.map(m => `"${m.title}" (Penerbit: ${m.issuer || 'RSUD'})`).join('; ');
+      return `- Kategori "${catName}": Contoh arsip tersimpan: ${titles}`;
+    }).filter(Boolean).join('\n');
+
     const categoryListStr = categories.map(c => `"${c}"`).join(', ');
     const prompt = `Anda adalah asisten cerdas sistem sertifikasi Diklat Rumah Sakit.
-Berdasarkan data sertifikat berikut:
+Berdasarkan data sertifikat yang sedang diunggah:
 - Judul Kegiatan: "${title || '-'}"
 - Nama Penerima: "${recipientName || '-'}"
 - Penyelenggara/Penerbit: "${issuer || '-'}"
 - Kategori Saat Ini: "${currentCategory || '-'}"
 - Keterangan Tambahan: "${description || '-'}"
 
+Referensi metadata riwayat arsip sertifikat yang sudah ada di sistem:
+${existingSamplePatterns || '(Belum ada arsip riwayat)'}
+
 Tugas Anda:
-1. Pilih satu Kategori yang paling sesuai dan akurat dari daftar kategori resmi: [${categoryListStr}].
+1. Pilih satu Kategori yang paling sesuai dan relevan dari daftar kategori resmi: [${categoryListStr}], dengan mencocokkan kemiripan metadata riwayat di atas.
 2. Buat 4 sampai 6 tag / kata kunci relevan dalam Bahasa Indonesia (contoh: "BHD", "Resusitasi Jantung", "Gawat Darurat", "Kemenkes RI", "SKP PPNI").
-3. Tuliskan 1 kalimat ringkasan singkat kompetensi.`;
+3. Tuliskan 1 kalimat ringkasan singkat kompetensi.
+4. Tuliskan 1 kalimat alasan rekomendasi kategori (misal: "Cocok dengan arsip sertifikat BHD dari Kemenkes RI").`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.7-flash',
@@ -1032,7 +1045,8 @@ Tugas Anda:
               items: { type: Type.STRING },
               description: '4-6 tag kata kunci relevan'
             },
-            summary: { type: Type.STRING, description: 'Ringkasan kompetensi 1 kalimat' }
+            summary: { type: Type.STRING, description: 'Ringkasan kompetensi 1 kalimat' },
+            reason: { type: Type.STRING, description: 'Alasan rekomendasi berdasarkan metadata arsip' }
           },
           required: ['category', 'suggestedTags']
         }
@@ -1047,11 +1061,106 @@ Tugas Anda:
       category: matchedCategory,
       suggestedTags: Array.isArray(parsed.suggestedTags) && parsed.suggestedTags.length > 0 ? parsed.suggestedTags : ['Pelatihan', 'Diklat RSUD'],
       summary: parsed.summary,
+      reason: parsed.reason,
       source: 'ai_gemini'
     });
   } catch (err: any) {
     console.error('Error suggesting tags/category:', err);
     res.status(500).json({ success: false, message: err.message || 'Gagal menghasilkan saran tag & kategori.' });
+  }
+});
+
+// Intelligent Category Recommendation Endpoint based on existing certificates database
+app.post('/api/certificates/recommend-category', (req: Request, res: Response) => {
+  try {
+    const { title, issuer, recipientName, description, tags, fileName } = req.body;
+    const existingCerts = getCertificatesFromDB();
+    const categories = getCategoriesFromDB().map(c => c.name);
+
+    // Dynamic heuristic & statistical matching against database
+    const textToMatch = `${title || ''} ${issuer || ''} ${recipientName || ''} ${description || ''} ${fileName || ''} ${Array.isArray(tags) ? tags.join(' ') : ''}`.toLowerCase();
+    
+    // Group existing certs by category
+    const catStats: Record<string, { count: number; matches: number; sampleTitle: string }> = {};
+    categories.forEach(cat => {
+      catStats[cat] = { count: 0, matches: 0, sampleTitle: '' };
+    });
+
+    existingCerts.forEach(cert => {
+      const cat = cert.category || 'Lainnya';
+      if (!catStats[cat]) {
+        catStats[cat] = { count: 0, matches: 0, sampleTitle: '' };
+      }
+      catStats[cat].count++;
+      
+      const certText = `${cert.title} ${cert.issuer} ${cert.tags?.join(' ') || ''}`.toLowerCase();
+      
+      // Calculate token match
+      const words = textToMatch.split(/\s+/).filter(w => w.length > 2);
+      let matchCount = 0;
+      words.forEach(w => {
+        if (certText.includes(w)) matchCount++;
+      });
+      if (matchCount > 0) {
+        catStats[cat].matches += matchCount;
+        if (!catStats[cat].sampleTitle) catStats[cat].sampleTitle = cert.title;
+      }
+    });
+
+    const recommendations = Object.entries(catStats).map(([catName, stat]) => {
+      let score = 20; // baseline
+      const reasons: string[] = [];
+
+      // Keyword domain check
+      const lower = textToMatch.toLowerCase();
+      if (catName === 'Pelatihan' && /pelatihan|diklat|training|bhd|btcls|kritis|icu|bedah|kompetensi|audit|anestesi/i.test(lower)) {
+        score += 45;
+        reasons.push('Kata kunci medis & diklat sesuai');
+      } else if (catName === 'Workshop' && /workshop|seminar|webinar|simposium|simrs|rme|desain|ui\/ux/i.test(lower)) {
+        score += 45;
+        reasons.push('Kata kunci seminar/workshop sesuai');
+      } else if (catName === 'Prestasi' && /prestasi|juara|lomba|pemenang|champion|kompetisi|terbaik/i.test(lower)) {
+        score += 45;
+        reasons.push('Kata kunci kompetisi & kejuaraan sesuai');
+      } else if (catName === 'Akademik' && /akademik|ijazah|diploma|sarjana|universitas|wisuda/i.test(lower)) {
+        score += 45;
+        reasons.push('Kata kunci pendidikan formal sesuai');
+      } else if (catName === 'Penghargaan' && /penghargaan|award|apresiasi|tanda kehormatan|pengabdian/i.test(lower)) {
+        score += 45;
+        reasons.push('Kata kunci tanda penghargaan sesuai');
+      } else if (catName === 'Kelulusan' && /lulus|kelulusan|sttpp|ukom/i.test(lower)) {
+        score += 45;
+        reasons.push('Kata kunci tanda kelulusan sesuai');
+      }
+
+      if (stat.matches > 0) {
+        score += Math.min(stat.matches * 10, 30);
+        reasons.push(`Ditemukan kemiripan dengan ${stat.matches} metadata arsip di kategori ini`);
+      }
+
+      if (lower.includes(catName.toLowerCase())) {
+        score += 20;
+        reasons.push(`Nama kategori tertera pada judul`);
+      }
+
+      const finalScore = Math.min(Math.max(score, 10), 98);
+      return {
+        category: catName,
+        score: finalScore,
+        confidence: finalScore >= 70 ? 'high' : finalScore >= 40 ? 'medium' : 'low',
+        reasons: reasons.length > 0 ? reasons : [`Berdasarkan riwayat ${stat.count} arsip sebelumnya`]
+      };
+    });
+
+    recommendations.sort((a, b) => b.score - a.score);
+
+    res.json({
+      success: true,
+      recommendations,
+      bestMatch: recommendations[0] || null
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -1303,12 +1412,36 @@ app.put('/api/certificates/:id', (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Sertifikat tidak ditemukan' });
     }
 
+    let driveFileId = updates.driveFileId !== undefined ? updates.driveFileId : records[index].driveFileId;
+    let webViewLink = updates.webViewLink !== undefined ? updates.webViewLink : records[index].webViewLink;
+    let webContentLink = updates.webContentLink !== undefined ? updates.webContentLink : records[index].webContentLink;
+    let thumbnailLink = updates.thumbnailLink !== undefined ? updates.thumbnailLink : records[index].thumbnailLink;
+
+    if (updates.webViewLink && updates.webViewLink !== records[index].webViewLink) {
+      const folderMatch = updates.webViewLink.match(/folders\/([a-zA-Z0-9_-]+)/);
+      const fileMatch = updates.webViewLink.match(/file\/d\/([a-zA-Z0-9_-]+)/) || updates.webViewLink.match(/id=([a-zA-Z0-9_-]+)/);
+      if (folderMatch) {
+        driveFileId = folderMatch[1];
+      } else if (fileMatch) {
+        driveFileId = fileMatch[1];
+        if (!updates.webContentLink) {
+          webContentLink = `https://drive.google.com/uc?export=download&id=${fileMatch[1]}`;
+        }
+        if (!updates.thumbnailLink) {
+          thumbnailLink = `https://drive.google.com/thumbnail?id=${fileMatch[1]}&sz=w800`;
+        }
+      }
+    }
+
     const updatedRecord: CertificateRecord = {
       ...records[index],
       ...updates,
+      driveFileId,
+      webViewLink,
+      webContentLink,
+      thumbnailLink,
       expiryDate: updates.expiryDate && updates.expiryDate.trim() !== '' ? updates.expiryDate.trim() : undefined,
       id: records[index].id, // preserve ID
-      driveFileId: records[index].driveFileId, // preserve drive file ID
       updatedAt: new Date().toISOString()
     };
 

@@ -39,6 +39,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
     <AnimatePresence>
       {isOpen && targetList.length > 0 && (
         <motion.div 
+          key="modal-delete-confirm-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -46,6 +47,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           className="fixed inset-0 z-60 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
         >
           <motion.div 
+            key="modal-delete-confirm-card"
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}

@@ -58,6 +58,7 @@ export const BatchUploadProgressBar: React.FC<BatchUploadProgressBarProps> = ({
   return (
     <AnimatePresence>
       <motion.div
+        key="batch-upload-progress-container"
         initial={{ opacity: 0, y: 10, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 10, scale: 0.98 }}

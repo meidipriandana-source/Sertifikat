@@ -5,20 +5,23 @@ import {
   Building2, HardDrive, FileText, Image as ImageIcon, QrCode, 
   Edit3, Trash2, ShieldCheck, Tag, Link2, Save, Clock, Printer, 
   Database, WifiOff, Eye, RefreshCw, Maximize2, Layers, Award,
-  Sparkles, AlertCircle
+  Sparkles, AlertCircle, Clipboard
 } from 'lucide-react';
 import { Certificate, CertificateCategory, CategoryItem } from '../types';
 import { updateCertificate } from '../services/api';
 import { ExpiryIndicatorBadge } from './ExpiryIndicatorBadge';
 import { CertificateThumbnail } from './CertificateThumbnail';
 import { PrintCertificateModal } from './PrintCertificateModal';
+import { EditDriveLinkModal } from './EditDriveLinkModal';
 import { getCategoryTheme } from '../utils/categoryColors';
+import { parseGoogleDriveLink } from '../utils/drive';
 
 interface CertificateDetailModalProps {
   certificate: Certificate | null;
   onClose: () => void;
   onUpdate: (updated: Certificate) => void;
   onDelete: (cert: Certificate) => void;
+  onOpenLightbox?: (cert: Certificate) => void;
   categoriesList?: CategoryItem[];
   isOnline?: boolean;
 }
@@ -35,45 +38,7 @@ function getGoogleDriveInfo(certificate: Certificate) {
   if (!certificate) {
     return { driveId: '', isFolder: false, isRealDrive: false, embedUrl: '', imageCdnUrl: null };
   }
-  let driveId = certificate.driveFileId || '';
-  let isFolder = false;
-
-  if (certificate.webViewLink) {
-    const folderMatch = certificate.webViewLink.match(/folders\/([a-zA-Z0-9_-]+)/);
-    if (folderMatch) {
-      driveId = folderMatch[1];
-      isFolder = true;
-    } else {
-      const fileMatch = certificate.webViewLink.match(/file\/d\/([a-zA-Z0-9_-]+)/) || certificate.webViewLink.match(/id=([a-zA-Z0-9_-]+)/);
-      if (fileMatch) {
-        driveId = fileMatch[1];
-      }
-    }
-  }
-
-  if (driveId.includes('folders/')) {
-    driveId = driveId.split('folders/')[1].split('/')[0].split('?')[0];
-    isFolder = true;
-  } else if (driveId.includes('file/d/')) {
-    driveId = driveId.split('file/d/')[1].split('/')[0].split('?')[0];
-  }
-
-  const isRealDrive = Boolean(driveId && !driveId.includes('SAMPLE') && !driveId.startsWith('sample'));
-  
-  let embedUrl = '';
-  if (isFolder) {
-    embedUrl = `https://drive.google.com/embeddedfolderview?id=${driveId}#list`;
-  } else if (isRealDrive) {
-    embedUrl = `https://drive.google.com/file/d/${driveId}/preview`;
-  }
-
-  return {
-    driveId,
-    isFolder,
-    isRealDrive,
-    embedUrl,
-    imageCdnUrl: isRealDrive ? `https://lh3.googleusercontent.com/d/${driveId}=w1200` : null
-  };
+  return parseGoogleDriveLink(certificate.webViewLink || certificate.driveFileId || '');
 }
 
 export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
@@ -81,6 +46,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   onClose,
   onUpdate,
   onDelete,
+  onOpenLightbox,
   categoriesList = [],
   isOnline = true
 }) => {
@@ -89,18 +55,24 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   const [copiedId, setCopiedId] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isEditDriveModalOpen, setIsEditDriveModalOpen] = useState(false);
 
   const [previewTab, setPreviewTab] = useState<'document' | 'card'>('document');
   const [isIframeLoading, setIsIframeLoading] = useState(true);
   const [iframeKey, setIframeKey] = useState(0);
   const [imageError, setImageError] = useState(false);
 
-  const availableCategories = Array.from(new Set(
-    (categoriesList.length > 0
-      ? categoriesList.map(c => c.name)
-      : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya']
-    ).map(s => (s || '').trim()).filter(Boolean)
-  ));
+  const categoryMap = new Map<string, string>();
+  const rawList = categoriesList.length > 0
+    ? categoriesList.map(c => c.name)
+    : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
+  rawList.forEach(s => {
+    const trimmed = (s || '').trim();
+    if (trimmed && !categoryMap.has(trimmed.toLowerCase())) {
+      categoryMap.set(trimmed.toLowerCase(), trimmed);
+    }
+  });
+  const availableCategories = Array.from(categoryMap.values());
 
   // Edit states
   const [editTitle, setEditTitle] = useState(certificate?.title || '');
@@ -111,6 +83,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   const [editExpiryDate, setEditExpiryDate] = useState(certificate?.expiryDate || '');
   const [editCategory, setEditCategory] = useState<CertificateCategory>(certificate?.category || 'Pelatihan');
   const [editDescription, setEditDescription] = useState(certificate?.description || '');
+  const [editWebViewLink, setEditWebViewLink] = useState(certificate?.webViewLink || '');
 
   useEffect(() => {
     if (certificate) {
@@ -122,6 +95,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
       setEditExpiryDate(certificate.expiryDate || '');
       setEditCategory(certificate.category);
       setEditDescription(certificate.description || '');
+      setEditWebViewLink(certificate.webViewLink || '');
       setIsEditing(false);
       setIsIframeLoading(true);
       setImageError(false);
@@ -158,6 +132,12 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
     if (!certificate) return;
     try {
       setIsSaving(true);
+      const parsedDrive = parseGoogleDriveLink(editWebViewLink);
+      const cleanWebViewLink = parsedDrive.isValid ? parsedDrive.webViewLink : (editWebViewLink.trim() || certificate.webViewLink);
+      const cleanDriveFileId = parsedDrive.isValid ? parsedDrive.driveId : certificate.driveFileId;
+      const cleanWebContentLink = parsedDrive.webContentLink || certificate.webContentLink;
+      const cleanThumbnailLink = parsedDrive.thumbnailLink || certificate.thumbnailLink;
+
       const updated = await updateCertificate(certificate.id, {
         title: editTitle,
         recipientName: editRecipient,
@@ -165,7 +145,11 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
         issueDate: editDate,
         expiryDate: editHasExpiryDate && editExpiryDate ? editExpiryDate : '',
         category: editCategory,
-        description: editDescription
+        description: editDescription,
+        webViewLink: cleanWebViewLink,
+        driveFileId: cleanDriveFileId,
+        webContentLink: cleanWebContentLink,
+        thumbnailLink: cleanThumbnailLink
       });
       onUpdate(updated);
       setIsEditing(false);
@@ -177,23 +161,26 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   };
 
   return (
-    <AnimatePresence>
-      {certificate && (
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2, ease: 'easeOut' }}
-          className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
-        >
+    <>
+      <AnimatePresence>
+        {certificate && (
           <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 16 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-            id="modal-certificate-detail"
-            className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[90vh]"
+            key="modal-cert-detail-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 transition-colors"
           >
+            <motion.div 
+              key="modal-cert-detail-card"
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+              id="modal-certificate-detail"
+              className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-800 transition-all flex flex-col max-h-[90vh]"
+            >
             {/* Modal Top Bar */}
         <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850 shrink-0">
           <div className="flex items-center gap-3.5">
@@ -313,6 +300,17 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       <RefreshCw className="w-3.5 h-3.5" />
                     </button>
                   )}
+                  {onOpenLightbox && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenLightbox(certificate)}
+                      title="Perbesar Layar Penuh (Fullscreen Lightbox)"
+                      className="px-2.5 py-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors inline-flex items-center gap-1 border border-slate-300 dark:border-slate-700 cursor-pointer shadow-2xs"
+                    >
+                      <Maximize2 className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                      <span>Perbesar Layar Penuh</span>
+                    </button>
+                  )}
                   <a
                     href={certificate.webViewLink}
                     target="_blank"
@@ -331,14 +329,21 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                 {previewTab === 'document' ? (
                   /* Real Document / PDF / Image View */
                   isImage && driveInfo.imageCdnUrl && !imageError ? (
-                    <div className="relative w-full h-80 sm:h-[380px] bg-slate-950 flex items-center justify-center p-2">
+                    <div 
+                      onClick={() => onOpenLightbox && onOpenLightbox(certificate)}
+                      title="Klik untuk membuka di lightbox layar penuh"
+                      className="relative w-full h-80 sm:h-[380px] bg-slate-950 flex items-center justify-center p-2 cursor-zoom-in group"
+                    >
                       <img
                         src={driveInfo.imageCdnUrl}
                         alt={certificate.title}
                         referrerPolicy="no-referrer"
                         onError={() => setImageError(true)}
-                        className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                        className="max-w-full max-h-full object-contain rounded-lg shadow-lg group-hover:scale-[1.02] transition-transform duration-200"
                       />
+                      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900/90 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md shadow flex items-center gap-1.5 pointer-events-none">
+                        <Maximize2 className="w-3 h-3 text-indigo-400" /> Klik untuk perbesar layar penuh
+                      </div>
                     </div>
                   ) : driveInfo.embedUrl ? (
                     <div className="relative w-full h-80 sm:h-[390px] bg-white dark:bg-slate-900">
@@ -365,6 +370,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                         certificate={certificate} 
                         size="large" 
                         showHoverZoom={false}
+                        onOpenLightbox={onOpenLightbox ? () => onOpenLightbox(certificate) : undefined}
                         className="w-full max-w-sm mx-auto"
                       />
                       <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -379,6 +385,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       certificate={certificate} 
                       size="large" 
                       showHoverZoom={false}
+                      onOpenLightbox={onOpenLightbox ? () => onOpenLightbox(certificate) : undefined}
                       className="w-full"
                     />
                   </div>
@@ -433,37 +440,58 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
               </span>
             </div>
 
-            {/* Google Drive Link Box with Copy Button */}
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-850 space-y-2 text-xs">
+            {/* Google Drive Link Box with Copy & Edit Buttons */}
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-850 space-y-2.5 text-xs">
               <div className="flex items-center justify-between text-slate-700 dark:text-slate-300 font-bold">
                 <div className="flex items-center gap-1.5">
                   <Link2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>Tautan Langsung Google Drive (Web View)</span>
+                  <span>Tautan Google Drive (Web View)</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditDriveModalOpen(true)}
+                    className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 font-bold hover:underline cursor-pointer"
+                    title="Ubah tautan atau file ID Google Drive sertifikat ini"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    <span>Ubah Tautan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="flex items-center gap-1 text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-bold cursor-pointer"
+                  >
+                    {copiedLink ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                        <span className="text-emerald-600 dark:text-emerald-400">Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        <span>Salin Tautan</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={certificate.webViewLink}
+                  className="w-full px-3 py-2 text-[11px] font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 select-all outline-none"
+                />
                 <button
                   type="button"
-                  onClick={handleCopyLink}
-                  className="flex items-center gap-1 text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-bold cursor-pointer"
+                  onClick={() => setIsEditDriveModalOpen(true)}
+                  className="px-2.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-xs font-bold shrink-0 transition-colors cursor-pointer"
+                  title="Ubah Tautan Google Drive"
                 >
-                  {copiedLink ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                      <span className="text-emerald-600 dark:text-emerald-400">Tersalin!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3 h-3" />
-                      <span>Salin Tautan</span>
-                    </>
-                  )}
+                  <Edit3 className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <input
-                type="text"
-                readOnly
-                value={certificate.webViewLink}
-                className="w-full px-3 py-2 text-[11px] font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 select-all outline-none"
-              />
             </div>
 
           </div>
@@ -487,6 +515,26 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                     onChange={(e) => setEditTitle(e.target.value)}
                     className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                   />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[10px] flex items-center gap-1">
+                      <Link2 className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                      <span>Tautan / URL Google Drive</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Dapat diedit</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={editWebViewLink}
+                    onChange={(e) => setEditWebViewLink(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/... atau https://drive.google.com/drive/folders/..."
+                    className="w-full px-3 py-2 text-xs font-mono border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                    Mendukung tautan berbagi berkas Google Drive, tautan folder, atau ID file langsung.
+                  </p>
                 </div>
 
                 <div>
@@ -582,9 +630,9 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       />
                       <div className="flex items-center gap-1">
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">Preset:</span>
-                        {[1, 2, 3, 5].map((yr) => (
+                        {[1, 2, 3, 5].map((yr, yrIdx) => (
                           <button
-                            key={`preset-yr-${yr}`}
+                            key={`preset-yr-${yr}-${yrIdx}`}
                             type="button"
                             onClick={() => handleSetEditExpiryPreset(yr)}
                             className="px-1.5 py-0.5 bg-white dark:bg-slate-700 hover:bg-slate-100 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded text-[10px] font-bold cursor-pointer"
@@ -759,6 +807,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
           </motion.div>
         </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Print Certificate Modal */}
       <PrintCertificateModal 
@@ -766,6 +815,17 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
         isOpen={isPrintModalOpen}
         onClose={() => setIsPrintModalOpen(false)}
       />
-    </AnimatePresence>
+
+      {/* Edit Google Drive Link Modal */}
+      <EditDriveLinkModal
+        certificate={certificate}
+        isOpen={isEditDriveModalOpen}
+        onClose={() => setIsEditDriveModalOpen(false)}
+        onUpdate={(updated) => {
+          onUpdate(updated);
+          setEditWebViewLink(updated.webViewLink);
+        }}
+      />
+    </>
   );
 };

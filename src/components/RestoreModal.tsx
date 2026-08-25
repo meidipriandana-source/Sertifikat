@@ -205,6 +205,7 @@ export const RestoreModal: React.FC<RestoreModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div 
+          key="modal-restore-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -212,6 +213,7 @@ export const RestoreModal: React.FC<RestoreModalProps> = ({
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto"
         >
           <motion.div 
+            key="modal-restore-card"
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
