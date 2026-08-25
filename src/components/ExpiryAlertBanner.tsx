@@ -119,11 +119,11 @@ export const ExpiryAlertBanner: React.FC<ExpiryAlertBannerProps> = ({
           MENDESAK:
         </span>
         
-        {previewItems.map(({ cert, details }) => {
+        {previewItems.map(({ cert, details }, pIdx) => {
           const isExpired = details.status === 'expired';
           return (
             <button
-              key={cert.id}
+              key={`banner-expiring-${cert.id || 'c'}-${pIdx}`}
               type="button"
               onClick={() => onSelectCertificate(cert)}
               className="inline-flex items-center gap-2 text-xs font-bold px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 hover:bg-amber-100/60 dark:hover:bg-slate-750 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 transition-all shadow-2xs cursor-pointer group"

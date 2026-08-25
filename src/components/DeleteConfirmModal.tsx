@@ -97,7 +97,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
                   </div>
                   {targetList.map((c, index) => (
                     <div 
-                      key={c.id} 
+                      key={`del-cert-${c.id || 'c'}-${index}`} 
                       className="p-3 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
                     >
                       <div className="min-w-0 flex items-center gap-2.5">

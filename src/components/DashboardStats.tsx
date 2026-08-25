@@ -63,10 +63,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   // Build dynamic categories list (Semua + all custom/system categories + any uncategorized names in certificates)
   const categoryNamesSet = new Set<string>();
   safeCategoriesList.forEach(c => {
-    if (c?.name) categoryNamesSet.add(c.name);
+    if (c?.name && c.name.trim().toLowerCase() !== 'semua') {
+      categoryNamesSet.add(c.name.trim());
+    }
   });
   safeCertificates.forEach(c => {
-    if (c?.category) categoryNamesSet.add(c.category);
+    if (c?.category && c.category.trim().toLowerCase() !== 'semua') {
+      categoryNamesSet.add(c.category.trim());
+    }
   });
 
   const categories = ['Semua', ...Array.from(categoryNamesSet)];
@@ -198,7 +202,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   {totalCategorized > 0 ? (
                     donutSlices.map((slice, i) => (
                       <circle
-                        key={i}
+                        key={`donut-slice-${slice.name}-${i}`}
                         cx="40"
                         cy="40"
                         r={radius}
@@ -236,7 +240,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 </div>
                 <div className="space-y-0.5 max-h-[56px] overflow-y-auto pr-1">
                   {donutSlices.slice(0, 3).map((slice, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5 text-[11px]">
+                    <div key={`donut-legend-${slice.name}-${idx}`} className="flex items-center gap-1.5 text-[11px]">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: slice.colorHex }} />
                       <span className="font-semibold text-slate-200 truncate max-w-[85px]">{slice.name}</span>
                       <span className="font-bold text-slate-400 ml-auto">{slice.percent}%</span>
@@ -341,7 +345,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
         
         <div className="flex items-center gap-2.5 overflow-x-auto text-xs no-scrollbar flex-1 py-0.5">
-          {categories.map(cat => {
+          {categories.map((cat, catIndex) => {
             const isSelected = selectedCategory === cat;
             const count = cat === 'Semua' 
               ? certificates.length 
@@ -352,7 +356,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
             return (
               <button
-                key={cat}
+                key={`filter-cat-${cat}-${catIndex}`}
                 id={`filter-cat-${cat.toLowerCase().replace(/\s+/g, '-')}`}
                 type="button"
                 onClick={() => onSelectCategory(cat)}

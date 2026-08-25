@@ -533,7 +533,7 @@ export const GoogleConnectModal: React.FC<GoogleConnectModalProps> = ({
                       const parsed = parseCertificateItemInfo(item, defaultActivityTitle, defaultRecipient);
                       return (
                         <div 
-                          key={idx} 
+                          key={`connect-parsed-item-${idx}-${item.slice(0, 15)}`} 
                           className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs text-xs"
                         >
                           <div className="flex items-center gap-2 min-w-0 flex-1">

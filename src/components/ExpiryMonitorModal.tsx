@@ -330,13 +330,13 @@ export const ExpiryMonitorModal: React.FC<ExpiryMonitorModalProps> = ({
               </div>
             </div>
           ) : (
-            filteredList.map(({ cert, details }) => {
+            filteredList.map(({ cert, details }, fIdx) => {
               const isUrgent = details.status === 'expiring_soon';
               const isExpired = details.status === 'expired';
 
               return (
                 <div
-                  key={cert.id}
+                  key={`monitor-item-${cert.id || 'c'}-${fIdx}`}
                   className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                     isExpired
                       ? 'bg-rose-50/60 dark:bg-rose-950/30 border-rose-200/80 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/50'

@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, ExternalLink, Download, Copy, Check, Calendar, User, 
   Building2, HardDrive, FileText, Image as ImageIcon, QrCode, 
-  Edit3, Trash2, ShieldCheck, Tag, Link2, Save, Clock, Printer, Database, WifiOff
+  Edit3, Trash2, ShieldCheck, Tag, Link2, Save, Clock, Printer, 
+  Database, WifiOff, Eye, RefreshCw, Maximize2, Layers, Award,
+  Sparkles, AlertCircle
 } from 'lucide-react';
 import { Certificate, CertificateCategory, CategoryItem } from '../types';
 import { updateCertificate } from '../services/api';
@@ -29,6 +31,51 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+function getGoogleDriveInfo(certificate: Certificate) {
+  if (!certificate) {
+    return { driveId: '', isFolder: false, isRealDrive: false, embedUrl: '', imageCdnUrl: null };
+  }
+  let driveId = certificate.driveFileId || '';
+  let isFolder = false;
+
+  if (certificate.webViewLink) {
+    const folderMatch = certificate.webViewLink.match(/folders\/([a-zA-Z0-9_-]+)/);
+    if (folderMatch) {
+      driveId = folderMatch[1];
+      isFolder = true;
+    } else {
+      const fileMatch = certificate.webViewLink.match(/file\/d\/([a-zA-Z0-9_-]+)/) || certificate.webViewLink.match(/id=([a-zA-Z0-9_-]+)/);
+      if (fileMatch) {
+        driveId = fileMatch[1];
+      }
+    }
+  }
+
+  if (driveId.includes('folders/')) {
+    driveId = driveId.split('folders/')[1].split('/')[0].split('?')[0];
+    isFolder = true;
+  } else if (driveId.includes('file/d/')) {
+    driveId = driveId.split('file/d/')[1].split('/')[0].split('?')[0];
+  }
+
+  const isRealDrive = Boolean(driveId && !driveId.includes('SAMPLE') && !driveId.startsWith('sample'));
+  
+  let embedUrl = '';
+  if (isFolder) {
+    embedUrl = `https://drive.google.com/embeddedfolderview?id=${driveId}#list`;
+  } else if (isRealDrive) {
+    embedUrl = `https://drive.google.com/file/d/${driveId}/preview`;
+  }
+
+  return {
+    driveId,
+    isFolder,
+    isRealDrive,
+    embedUrl,
+    imageCdnUrl: isRealDrive ? `https://lh3.googleusercontent.com/d/${driveId}=w1200` : null
+  };
+}
+
 export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   certificate,
   onClose,
@@ -43,9 +90,17 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
-  const availableCategories = categoriesList.length > 0
-    ? categoriesList.map(c => c.name)
-    : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
+  const [previewTab, setPreviewTab] = useState<'document' | 'card'>('document');
+  const [isIframeLoading, setIsIframeLoading] = useState(true);
+  const [iframeKey, setIframeKey] = useState(0);
+  const [imageError, setImageError] = useState(false);
+
+  const availableCategories = Array.from(new Set(
+    (categoriesList.length > 0
+      ? categoriesList.map(c => c.name)
+      : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya']
+    ).map(s => (s || '').trim()).filter(Boolean)
+  ));
 
   // Edit states
   const [editTitle, setEditTitle] = useState(certificate?.title || '');
@@ -68,10 +123,14 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
       setEditCategory(certificate.category);
       setEditDescription(certificate.description || '');
       setIsEditing(false);
+      setIsIframeLoading(true);
+      setImageError(false);
     }
   }, [certificate]);
 
   const isPdf = certificate?.mimeType === 'application/pdf';
+  const isImage = certificate?.mimeType?.startsWith('image/');
+  const driveInfo = certificate ? getGoogleDriveInfo(certificate) : { driveId: '', isFolder: false, isRealDrive: false, embedUrl: '', imageCdnUrl: null };
 
   const handleCopyLink = () => {
     if (!certificate) return;
@@ -209,21 +268,126 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
           <div className="lg:col-span-7 space-y-4">
             
             {/* Visual File Preview Box */}
-            <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-900/5 dark:bg-slate-850 flex flex-col p-4 relative group shadow-2xs">
+            <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-50/80 dark:bg-slate-850 flex flex-col p-3.5 relative shadow-xs">
               
+              {/* Preview Header / Mode Tabs */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-200/80 dark:border-slate-800">
+                <div className="flex items-center gap-1 p-0.5 bg-slate-200/70 dark:bg-slate-800 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTab('document')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      previewTab === 'document'
+                        ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Pratinjau Dokumen Asli</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTab('card')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      previewTab === 'card'
+                        ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Kartu Digital</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5 text-xs">
+                  {previewTab === 'document' && driveInfo.embedUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsIframeLoading(true);
+                        setIframeKey(k => k + 1);
+                      }}
+                      title="Muat Ulang Pratinjau Dokumen"
+                      className="p-1.5 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <a
+                    href={certificate.webViewLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Buka Langsung di Google Drive"
+                    className="px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 rounded-lg transition-colors inline-flex items-center gap-1 border border-indigo-200/80 dark:border-indigo-800"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>Buka Drive</span>
+                  </a>
+                </div>
+              </div>
+
               {/* Document Visual Render */}
-              <div className="w-full mb-3 rounded-xl overflow-hidden border border-slate-200/80 dark:border-slate-750 shadow-xs">
-                <CertificateThumbnail 
-                  certificate={certificate} 
-                  size="large" 
-                  showHoverZoom={false}
-                  className="w-full"
-                />
+              <div className="w-full mb-3 rounded-xl overflow-hidden border border-slate-200/90 dark:border-slate-750 shadow-xs bg-slate-900/5 dark:bg-slate-900">
+                {previewTab === 'document' ? (
+                  /* Real Document / PDF / Image View */
+                  isImage && driveInfo.imageCdnUrl && !imageError ? (
+                    <div className="relative w-full h-80 sm:h-[380px] bg-slate-950 flex items-center justify-center p-2">
+                      <img
+                        src={driveInfo.imageCdnUrl}
+                        alt={certificate.title}
+                        referrerPolicy="no-referrer"
+                        onError={() => setImageError(true)}
+                        className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                      />
+                    </div>
+                  ) : driveInfo.embedUrl ? (
+                    <div className="relative w-full h-80 sm:h-[390px] bg-white dark:bg-slate-900">
+                      {isIframeLoading && (
+                        <div className="absolute inset-0 bg-slate-50 dark:bg-slate-850 flex flex-col items-center justify-center gap-2 z-10 text-slate-500 dark:text-slate-400">
+                          <RefreshCw className="w-6 h-6 animate-spin text-indigo-600 dark:text-indigo-400" />
+                          <span className="text-xs font-semibold">Memuat Pratinjau Dokumen Google Drive...</span>
+                          <span className="text-[11px] text-slate-400">Pastikan izin Google Drive dapat diakses</span>
+                        </div>
+                      )}
+                      <iframe
+                        key={`${certificate.id}-${iframeKey}`}
+                        src={driveInfo.embedUrl}
+                        title={certificate.title}
+                        onLoad={() => setIsIframeLoading(false)}
+                        className="w-full h-full border-0 bg-white"
+                        allow="autoplay"
+                      />
+                    </div>
+                  ) : (
+                    /* Fallback when no direct Google Drive file is connected */
+                    <div className="p-6 text-center space-y-3 bg-slate-100 dark:bg-slate-800/60">
+                      <CertificateThumbnail 
+                        certificate={certificate} 
+                        size="large" 
+                        showHoverZoom={false}
+                        className="w-full max-w-sm mx-auto"
+                      />
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        File lokal atau ID simulasi ({certificate.driveFileId}).
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  /* Digital Certificate Design Card */
+                  <div className="p-3 bg-slate-100/70 dark:bg-slate-850">
+                    <CertificateThumbnail 
+                      certificate={certificate} 
+                      size="large" 
+                      showHoverZoom={false}
+                      className="w-full"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2 text-center">
                 <div>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{certificate.fileName}</p>
+                  <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate px-2">{certificate.fileName}</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
                     {certificate.mimeType} • {formatBytes(certificate.fileSize)}
                   </p>
@@ -234,7 +398,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsPrintModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all shadow-xs cursor-pointer active:scale-95"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all shadow-xs cursor-pointer active:scale-95"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>Cetak Versi Dokumen</span>
@@ -255,7 +419,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       href={certificate.webContentLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-xs"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-xs"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>Unduh File</span>
@@ -362,8 +526,8 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                       onChange={(e) => setEditCategory(e.target.value)}
                       className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer font-medium"
                     >
-                      {availableCategories.map(catName => (
-                        <option key={catName} value={catName}>{catName}</option>
+                      {availableCategories.map((catName, cIdx) => (
+                        <option key={`opt-cat-${catName}-${cIdx}`} value={catName}>{catName}</option>
                       ))}
                     </select>
                   </div>
@@ -420,7 +584,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">Preset:</span>
                         {[1, 2, 3, 5].map((yr) => (
                           <button
-                            key={yr}
+                            key={`preset-yr-${yr}`}
                             type="button"
                             onClick={() => handleSetEditExpiryPreset(yr)}
                             className="px-1.5 py-0.5 bg-white dark:bg-slate-700 hover:bg-slate-100 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded text-[10px] font-bold cursor-pointer"
@@ -559,7 +723,7 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       {certificate.tags.map((t, idx) => (
                         <span
-                          key={idx}
+                          key={`detail-tag-${certificate.id || 'c'}-${t}-${idx}`}
                           className="text-[10px] px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 rounded-lg font-bold border border-indigo-100 dark:border-indigo-900/50"
                         >
                           #{t}

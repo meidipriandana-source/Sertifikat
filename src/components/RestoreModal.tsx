@@ -464,7 +464,7 @@ export const RestoreModal: React.FC<RestoreModalProps> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300 font-medium text-[11px]">
                     {parsedData.slice(0, 5).map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50">
+                      <tr key={`restore-row-${item.id || item.title || 'cert'}-${idx}`} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50">
                         <td className="py-2 px-3 font-semibold truncate max-w-[140px]">{item.title || 'Tanpa Judul'}</td>
                         <td className="py-2 px-3 truncate max-w-[120px]">{item.recipientName || '-'}</td>
                         <td className="py-2 px-3">{item.category || 'Lainnya'}</td>

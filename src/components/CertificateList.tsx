@@ -578,14 +578,14 @@ export const CertificateList: React.FC<CertificateListProps> = ({
       ) : viewMode === 'grid' ? (
         /* GRID VIEW */
         <div className="pt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-5">
-          {displayedCertificates.map((cert) => {
+          {displayedCertificates.map((cert, idx) => {
             const catStyle = getCategoryTheme(cert.category, categoriesList);
             const isPdf = cert.mimeType === 'application/pdf';
             const isSelected = selectedIds.has(cert.id);
 
             return (
               <div
-                key={cert.id}
+                key={`grid-cert-${cert.id || 'c'}-${idx}`}
                 id={`cert-card-${cert.id}`}
                 className={`bg-white dark:bg-slate-850 rounded-2xl border transition-all flex flex-col justify-between overflow-hidden group ${
                   isSelected 
@@ -673,7 +673,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                       <div className="flex flex-wrap gap-1 mt-3.5">
                         {cert.tags.slice(0, 3).map((tag, idx) => (
                           <span
-                            key={idx}
+                            key={`grid-tag-${cert.id || 'c'}-${tag}-${idx}`}
                             className="text-[10px] px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-md font-medium"
                           >
                             #{tag}
@@ -776,14 +776,14 @@ export const CertificateList: React.FC<CertificateListProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {displayedCertificates.map((cert) => {
+              {displayedCertificates.map((cert, idx) => {
                 const catStyle = getCategoryTheme(cert.category, categoriesList);
                 const isPdf = cert.mimeType === 'application/pdf';
                 const isSelected = selectedIds.has(cert.id);
 
                 return (
                   <tr 
-                    key={cert.id} 
+                    key={`table-cert-${cert.id || 'c'}-${idx}`} 
                     className={`transition-colors ${
                       isSelected 
                         ? 'bg-indigo-50/80 dark:bg-indigo-950/40 font-medium border-l-4 border-indigo-600 dark:border-indigo-400' 

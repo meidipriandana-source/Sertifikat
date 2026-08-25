@@ -311,11 +311,11 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                   Pilih Warna Tema Badge
                 </label>
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                  {COLOR_OPTIONS.map(c => {
+                  {COLOR_OPTIONS.map((c, idx) => {
                     const isSelected = selectedColor === c.id;
                     return (
                       <button
-                        key={c.id}
+                        key={`color-opt-${c.id}-${idx}`}
                         type="button"
                         onClick={() => setSelectedColor(c.id)}
                         className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition-all cursor-pointer ${
@@ -338,12 +338,12 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                   Pilih Ikon Visual
                 </label>
                 <div className="grid grid-cols-4 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto p-1">
-                  {ICON_OPTIONS.map(opt => {
+                  {ICON_OPTIONS.map((opt, idx) => {
                     const IconComp = opt.icon;
                     const isSelected = selectedIcon === opt.id;
                     return (
                       <button
-                        key={opt.id}
+                        key={`icon-opt-${opt.id}-${idx}`}
                         type="button"
                         onClick={() => setSelectedIcon(opt.id)}
                         className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
@@ -403,14 +403,14 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
 
               {/* Categories Cards */}
               <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-850">
-                {categories.map(cat => {
+                {categories.map((cat, idx) => {
                   const theme = getCategoryTheme(cat.name, categories);
                   const IconComp = getCategoryIcon(cat.icon);
                   const certCount = usageCountMap[cat.name] || 0;
 
                   return (
                     <div 
-                      key={cat.id} 
+                      key={`cat-manage-card-${cat.id || cat.name}-${idx}`} 
                       className="p-4 hover:bg-slate-50/80 dark:hover:bg-slate-800/60 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                     >
                       <div className="flex items-start gap-3 min-w-0">
@@ -554,8 +554,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                   >
                     {categories
                       .filter(c => c.id !== deletingCategory.id)
-                      .map(c => (
-                        <option key={c.id} value={c.name}>
+                      .map((c, idx) => (
+                        <option key={`fallback-cat-opt-${c.id || c.name}-${idx}`} value={c.name}>
                           {c.name}
                         </option>
                       ))}

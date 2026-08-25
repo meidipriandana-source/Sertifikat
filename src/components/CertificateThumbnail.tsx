@@ -58,6 +58,24 @@ const CATEGORY_GRADIENTS: Record<string, { bg: string; border: string; accent: s
   },
 };
 
+function getCleanDriveId(certificate: Certificate): string | null {
+  if (!certificate) return null;
+  let id = certificate.driveFileId || '';
+  if (id.includes('folders/')) {
+    id = id.split('folders/')[1].split('/')[0].split('?')[0];
+  } else if (id.includes('file/d/')) {
+    id = id.split('file/d/')[1].split('/')[0].split('?')[0];
+  }
+  if (!id || id.includes('SAMPLE') || id.startsWith('sample')) {
+    if (certificate.webViewLink) {
+      const fileMatch = certificate.webViewLink.match(/file\/d\/([a-zA-Z0-9_-]+)/) || certificate.webViewLink.match(/id=([a-zA-Z0-9_-]+)/);
+      if (fileMatch) return fileMatch[1];
+    }
+    return null;
+  }
+  return id;
+}
+
 export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
   certificate,
   size = 'table',
@@ -68,15 +86,32 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
   const [imageError, setImageError] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [urlIndex, setUrlIndex] = useState(0);
 
   const isPdf = certificate.mimeType === 'application/pdf';
   const categoryStyle = CATEGORY_GRADIENTS[certificate.category] || CATEGORY_GRADIENTS.Lainnya;
+  const driveId = getCleanDriveId(certificate);
 
-  // Determine possible thumbnail URLs
-  const candidateUrl = certificate.thumbnailLink 
-    || (certificate.driveFileId && !certificate.driveFileId.includes('SAMPLE') 
-        ? `https://drive.google.com/thumbnail?id=${certificate.driveFileId}&sz=w320`
-        : null);
+  // Build cascade of candidate URLs
+  const candidateUrls: string[] = [];
+  if (certificate.thumbnailLink) {
+    candidateUrls.push(certificate.thumbnailLink);
+  }
+  if (driveId) {
+    candidateUrls.push(`https://lh3.googleusercontent.com/d/${driveId}=w400`);
+    candidateUrls.push(`https://drive.google.com/thumbnail?id=${driveId}&sz=w400`);
+    candidateUrls.push(`https://drive.google.com/uc?export=view&id=${driveId}`);
+  }
+
+  const currentUrl = candidateUrls[urlIndex] || null;
+
+  const handleImageError = () => {
+    if (urlIndex < candidateUrls.length - 1) {
+      setUrlIndex(prev => prev + 1);
+    } else {
+      setImageError(true);
+    }
+  };
 
   // Sizing definitions
   const sizeClasses = {
@@ -97,14 +132,14 @@ export const CertificateThumbnail: React.FC<CertificateThumbnailProps> = ({
         className={`${sizeClasses} rounded-xl overflow-hidden border border-slate-200/90 dark:border-slate-700/80 shadow-2xs bg-slate-100 dark:bg-slate-850 cursor-pointer relative transition-all duration-200 group-hover:border-indigo-400 dark:group-hover:border-indigo-500 group-hover:shadow-md`}
       >
         {/* Attempt to load image if available and not erroring */}
-        {candidateUrl && !imageError ? (
+        {currentUrl && !imageError ? (
           <>
             <img 
-              src={candidateUrl} 
+              src={currentUrl} 
               alt={certificate.title}
               referrerPolicy="no-referrer"
               onLoad={() => setImageLoaded(true)}
-              onError={() => setImageError(true)}
+              onError={handleImageError}
               className={`w-full h-full object-cover object-center transition-transform duration-300 group-hover:scale-105 ${
                 imageLoaded ? 'opacity-100' : 'opacity-0'
               }`}

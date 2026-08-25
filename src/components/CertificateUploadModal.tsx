@@ -58,10 +58,13 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 }) => {
   const [uploadMode, setUploadMode] = useState<'single' | 'batch'>('single');
   
-  // Available category names
-  const availableCategories = categoriesList.length > 0 
-    ? categoriesList.map(c => c.name)
-    : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya'];
+  // Available category names (guaranteed unique)
+  const availableCategories = Array.from(new Set(
+    (categoriesList.length > 0 
+      ? categoriesList.map(c => c.name)
+      : ['Pelatihan', 'Workshop', 'Prestasi', 'Penghargaan', 'Akademik', 'Kelulusan', 'Lainnya']
+    ).map(s => (s || '').trim()).filter(Boolean)
+  ));
 
   // Single upload states
   const [title, setTitle] = useState('');
@@ -809,8 +812,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                     onChange={(e) => setCategory(e.target.value)}
                     className="w-full px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
                   >
-                    {availableCategories.map(catName => (
-                      <option key={catName} value={catName}>{catName}</option>
+                    {availableCategories.map((catName, idx) => (
+                      <option key={`single-cat-${catName}-${idx}`} value={catName}>{catName}</option>
                     ))}
                   </select>
                 </div>
@@ -964,11 +967,11 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       </button>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {aiSuggestedTags.map((st) => {
+                      {aiSuggestedTags.map((st, sIdx) => {
                         const isSelected = tags.includes(st);
                         return (
                           <button
-                            key={st}
+                            key={`suggested-tag-${st}-${sIdx}`}
                             type="button"
                             onClick={() => handleToggleSuggestedTag(st)}
                             className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -994,9 +997,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                   
                   {tags.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-2">
-                      {tags.map((t) => (
+                      {tags.map((t, tIdx) => (
                         <span
-                          key={t}
+                          key={`active-tag-${t}-${tIdx}`}
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60"
                         >
                           <Tag className="w-3 h-3 text-indigo-500" />
@@ -1148,8 +1151,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                         onChange={(e) => handleApplyCommonCategoryToAll(e.target.value)}
                         className="w-full px-2.5 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                       >
-                        {availableCategories.map(catName => (
-                          <option key={catName} value={catName}>{catName}</option>
+                        {availableCategories.map((catName, idx) => (
+                          <option key={`batch-common-cat-${catName}-${idx}`} value={catName}>{catName}</option>
                         ))}
                       </select>
                     </div>
@@ -1282,7 +1285,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                           const currentItemTags = item.tags || item.suggestedTags || [item.category];
 
                           return (
-                            <tr key={idx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                            <tr key={`batch-row-${item.file?.name || 'item'}-${idx}`} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
                               {/* No */}
                               <td className="py-2 px-3 text-center font-bold text-slate-400">
                                 {idx + 1}
@@ -1339,8 +1342,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                                   onChange={(e) => handleBatchItemChange(originalIdx, 'category', e.target.value)}
                                   className="w-full px-2 py-1.5 text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
                                 >
-                                  {availableCategories.map(catName => (
-                                    <option key={catName} value={catName}>{catName}</option>
+                                  {availableCategories.map((catName, cIdx) => (
+                                    <option key={`batch-row-cat-${catName}-${cIdx}`} value={catName}>{catName}</option>
                                   ))}
                                 </select>
                               </td>
@@ -1350,7 +1353,7 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                                 <div className="flex flex-wrap gap-1 items-center max-w-[200px]">
                                   {currentItemTags.slice(0, 3).map((t, tIdx) => (
                                     <span
-                                      key={tIdx}
+                                      key={`batch-tag-${idx}-${t}-${tIdx}`}
                                       className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/50 truncate max-w-[90px]"
                                       title={t}
                                     >
