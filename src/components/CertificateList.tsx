@@ -855,14 +855,14 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                       onClick={() => onSelectCertificate(cert)}
                       className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-2 cursor-pointer leading-snug"
                     >
-                      <HighlightedText text={cert.title} query={searchQuery} />
+                      <HighlightedText text={cert.title} query={searchQuery} highlightClassName="bg-yellow-300 dark:bg-yellow-400 text-slate-950 font-bold px-1.5 py-0.5 rounded shadow-[0_0_12px_rgba(250,204,21,0.8)] border border-yellow-400" />
                     </h3>
 
                     <div className="mt-3 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
                       <div className="flex items-center gap-2">
                         <User className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />
                         <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                          <HighlightedText text={cert.recipientName} query={searchQuery} />
+                          <HighlightedText text={cert.recipientName} query={searchQuery} highlightClassName="bg-yellow-300 dark:bg-yellow-400 text-slate-950 font-bold px-1.5 py-0.5 rounded shadow-[0_0_12px_rgba(250,204,21,0.8)] border border-yellow-400" />
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1057,7 +1057,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                           className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 font-bold text-slate-900 dark:text-slate-100 transition-colors leading-tight text-sm line-clamp-2"
                           title={cert.title}
                         >
-                          <HighlightedText text={cert.title} query={searchQuery} />
+                          <HighlightedText text={cert.title} query={searchQuery} highlightClassName="bg-yellow-300 dark:bg-yellow-400 text-slate-950 font-bold px-1.5 py-0.5 rounded shadow-[0_0_12px_rgba(250,204,21,0.8)] border border-yellow-400" />
                         </p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
@@ -1081,7 +1081,7 @@ export const CertificateList: React.FC<CertificateListProps> = ({
                       <div className="flex items-center gap-2">
                         <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="font-semibold text-slate-900 dark:text-slate-100">
-                          <HighlightedText text={cert.recipientName} query={searchQuery} />
+                          <HighlightedText text={cert.recipientName} query={searchQuery} highlightClassName="bg-yellow-300 dark:bg-yellow-400 text-slate-950 font-bold px-1.5 py-0.5 rounded shadow-[0_0_12px_rgba(250,204,21,0.8)] border border-yellow-400" />
                         </span>
                       </div>
                     </td>
