@@ -6,6 +6,13 @@
   body {
     @apply transition-colors duration-200;
   }
+
+  /* Deep dark teal/cyan background tone in dark mode */
+  .dark body,
+  html.dark {
+    background-color: #051820;
+    color: #e2f1f5;
+  }
 }
 
 @keyframes ledBlink {
@@ -23,6 +30,15 @@
 
 .animate-led-blink {
   animation: ledBlink 1.1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom scrollbar for horizontal strips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Print Media Styles */

@@ -628,14 +628,14 @@ export const CertificateDetailModal: React.FC<CertificateDetailModalProps> = ({
                         onChange={(e) => setEditExpiryDate(e.target.value)}
                         className="w-full px-3 py-1.5 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
                       />
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center flex-wrap gap-1">
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">Preset:</span>
-                        {[1, 2, 3, 5].map((yr, yrIdx) => (
+                        {[1, 2, 3, 4, 5, 10].map((yr, yrIdx) => (
                           <button
                             key={`preset-yr-${yr}-${yrIdx}`}
                             type="button"
                             onClick={() => handleSetEditExpiryPreset(yr)}
-                            className="px-1.5 py-0.5 bg-white dark:bg-slate-700 hover:bg-slate-100 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded text-[10px] font-bold cursor-pointer"
+                            className="px-1.5 py-0.5 bg-white dark:bg-slate-700 hover:bg-slate-100 hover:text-teal-600 dark:hover:text-teal-300 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded text-[10px] font-bold cursor-pointer transition-colors"
                           >
                             +{yr} Thn
                           </button>

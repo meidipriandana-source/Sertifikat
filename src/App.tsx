@@ -403,16 +403,16 @@ export default function App() {
         {!isCloudBannerDismissed ? (
           <div 
             id="banner-cloud-storage-info"
-            className="bg-slate-900 dark:bg-slate-900/95 rounded-2xl border border-slate-800 text-white shadow-xs overflow-hidden transition-all duration-200"
+            className="bg-gradient-to-r from-[#071f29] via-[#14122b] to-[#071f29] rounded-2xl border border-amber-400/35 dark:border-purple-400/35 text-white shadow-xs overflow-hidden transition-all duration-200"
           >
             {/* Slim Header Bar (Always visible, click to toggle) */}
             <div className="px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 shrink-0">
-                  <Cloud className="w-3.5 h-3.5" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-black bg-gradient-to-r from-amber-500/25 via-purple-500/25 to-teal-500/20 text-amber-200 border border-amber-300/40 shrink-0 shadow-xs">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
                   <span>Google Drive Sync</span>
                 </span>
-                <p className="text-xs text-slate-300 truncate">
+                <p className="text-xs text-slate-200 truncate">
                   <span className="font-semibold text-white hidden sm:inline">Penyimpanan Terpusat: </span>
                   <span>Folder <strong className="text-white font-bold">📁 Sertifikat Digital</strong> terhubung otomatis</span>
                 </p>
@@ -429,7 +429,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleToggleExpandCloudBanner}
-                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white transition-colors cursor-pointer flex items-center gap-1"
+                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-200 border border-teal-400/40 transition-colors cursor-pointer flex items-center gap-1"
                   title={isCloudBannerExpanded ? 'Sembunyikan rincian' : 'Lihat rincian lengkap'}
                 >
                   <span>{isCloudBannerExpanded ? 'Ringkas' : 'Rincian'}</span>
@@ -453,12 +453,12 @@ export default function App() {
 
             {/* Expanded Detailed Content (Collapsible) */}
             {isCloudBannerExpanded && (
-              <div className="px-4 pb-3.5 pt-2 border-t border-slate-800 bg-slate-950/50 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-slate-300 animate-in fade-in slide-in-from-top-1 duration-200">
+              <div className="px-4 pb-3.5 pt-2 border-t border-[#123e4e] bg-[#051820]/90 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-slate-300 animate-in fade-in slide-in-from-top-1 duration-200">
                 <div className="space-y-1 max-w-2xl">
                   <p className="leading-relaxed">
                     Semua berkas fisik (PDF, JPG, PNG) otomatis diunggah dan disimpan ke folder terisolasi <span className="text-white font-bold">"Sertifikat Digital"</span> pada akun Google Drive Anda.
                   </p>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-teal-200/70">
                     Kredensial dan metadata diindeks secara lokal untuk akses cepat, pencarian instan, dan pratinjau langsung tanpa membebani kuota penyimpanan lokal Anda.
                   </p>
                 </div>
@@ -473,7 +473,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setIsUploadOpen(true)}
-                    className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    className="px-3.5 py-1.5 text-xs font-black rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 shadow-xs flex items-center gap-1.5 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                     <span>Unggah Berkas</span>

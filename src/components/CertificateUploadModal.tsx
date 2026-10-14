@@ -35,6 +35,7 @@ interface CertificateUploadModalProps {
 
 interface BatchFileItem {
   file: File;
+  previewUrl?: string;
   title: string;
   recipientName: string;
   category: CertificateCategory;
@@ -111,9 +112,32 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [previewModalFile, setPreviewModalFile] = useState<{ file: File; name: string; url?: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchFileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  async function traverseFileTree(item: FileSystemEntry, files: File[]) {
+    if (item.isFile) {
+      await new Promise<void>((resolve) => {
+        (item as FileSystemFileEntry).file((file) => {
+          files.push(file);
+          resolve();
+        }, () => resolve());
+      });
+    } else if (item.isDirectory) {
+      const dirReader = (item as FileSystemDirectoryEntry).createReader();
+      await new Promise<void>((resolve) => {
+        dirReader.readEntries(async (entries: FileSystemEntry[]) => {
+          for (const entry of entries) {
+            await traverseFileTree(entry, files);
+          }
+          resolve();
+        }, () => resolve());
+      });
+    }
+  }
 
   // Compute intelligent real-time category recommendations based on current form metadata and archive history
   const singleCategoryRecommendations = useMemo(() => {
@@ -261,7 +285,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     setScanSource(null);
 
     const validMimes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!validMimes.includes(selectedFile.type)) {
+    const isValid = validMimes.includes(selectedFile.type) || /\.(pdf|jpg|jpeg|png|webp)$/i.test(selectedFile.name);
+    if (!isValid) {
       setErrorMsg('Format file tidak didukung. Harap pilih file PDF, JPG, atau PNG.');
       return;
     }
@@ -273,15 +298,11 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
     setFile(selectedFile);
 
-    if (selectedFile.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setPreviewUrl(reader.result as string);
-      };
-      reader.readAsDataURL(selectedFile);
-    } else {
-      setPreviewUrl(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
     }
+    const url = URL.createObjectURL(selectedFile);
+    setPreviewUrl(url);
 
     // 1. Immediate Heuristic Pre-fill from Filename
     const parsed = parseCertificateItemInfo(selectedFile.name, 'Sertifikat Pelatihan', 'Staff RSUD');
@@ -429,11 +450,14 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
     const addedItems: BatchFileItem[] = [];
 
     Array.from(newFileList).forEach((f) => {
-      if (validMimes.includes(f.type) && f.size <= 30 * 1024 * 1024) {
+      const isValid = validMimes.includes(f.type) || /\.(pdf|jpg|jpeg|png|webp)$/i.test(f.name);
+      if (isValid && f.size <= 30 * 1024 * 1024) {
         const fallbackTitle = batchCommonTitle.trim() || 'Sertifikat Pelatihan';
         const parsed = parseCertificateItemInfo(f.name, fallbackTitle, 'Peserta Diklat');
+        const previewUrl = URL.createObjectURL(f);
         addedItems.push({
           file: f,
+          previewUrl,
           title: batchCommonTitle.trim() ? batchCommonTitle.trim() : parsed.title,
           recipientName: parsed.recipientName,
           category: batchCommonCategory || parsed.category,
@@ -464,6 +488,10 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
   };
 
   const handleRemoveBatchItem = (index: number) => {
+    const item = batchFiles[index];
+    if (item?.previewUrl) {
+      URL.revokeObjectURL(item.previewUrl);
+    }
     setBatchFiles(batchFiles.filter((_, idx) => idx !== index));
   };
 
@@ -1052,27 +1080,48 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                   </label>
 
                   {hasExpiryDate && (
-                    <div className="flex gap-1.5">
+                    <div className="flex flex-wrap gap-1">
                       <button
                         type="button"
                         onClick={() => handleSetExpiryPreset(1)}
-                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:text-teal-600 dark:hover:text-teal-300 cursor-pointer"
                       >
                         1 Thn
                       </button>
                       <button
                         type="button"
+                        onClick={() => handleSetExpiryPreset(2)}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:text-teal-600 dark:hover:text-teal-300 cursor-pointer"
+                      >
+                        2 Thn
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleSetExpiryPreset(3)}
-                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:text-teal-600 dark:hover:text-teal-300 cursor-pointer"
                       >
                         3 Thn (Medis)
                       </button>
                       <button
                         type="button"
+                        onClick={() => handleSetExpiryPreset(4)}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:text-teal-600 dark:hover:text-teal-300 cursor-pointer"
+                      >
+                        4 Thn
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleSetExpiryPreset(5)}
-                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:text-teal-600 dark:hover:text-teal-300 cursor-pointer"
                       >
                         5 Thn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetExpiryPreset(10)}
+                        className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold hover:bg-teal-50 dark:hover:bg-teal-950/50 hover:text-teal-600 dark:hover:text-teal-300 cursor-pointer"
+                      >
+                        10 Thn
                       </button>
                     </div>
                   )}
@@ -1357,7 +1406,9 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                         <option value={1}>1 Tahun</option>
                         <option value={2}>2 Tahun</option>
                         <option value={3}>3 Tahun (Medis)</option>
+                        <option value={4}>4 Tahun</option>
                         <option value={5}>5 Tahun</option>
+                        <option value={10}>10 Tahun</option>
                         <option value={0}>Seumur Hidup</option>
                       </select>
                     </div>
@@ -1398,20 +1449,34 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                 </div>
               </div>
 
-              {/* Batch Dropzone */}
+              {/* Batch Dropzone & Folder Upload */}
               <div>
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
-                  onDrop={(e) => {
+                  onDrop={async (e) => {
                     e.preventDefault();
                     setIsDragging(false);
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      handleBatchFilesAdd(e.dataTransfer.files);
+                    const items = e.dataTransfer.items;
+                    const collectedFiles: File[] = [];
+                    if (items && items.length > 0) {
+                      for (let i = 0; i < items.length; i++) {
+                        const entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+                        if (entry) {
+                          await traverseFileTree(entry, collectedFiles);
+                        } else {
+                          const file = items[i].getAsFile();
+                          if (file) collectedFiles.push(file);
+                        }
+                      }
+                    } else if (e.dataTransfer.files) {
+                      collectedFiles.push(...(Array.from(e.dataTransfer.files) as File[]));
+                    }
+                    if (collectedFiles.length > 0) {
+                      handleBatchFilesAdd(collectedFiles);
                     }
                   }}
-                  onClick={() => batchFileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all ${
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all ${
                     isDragging
                       ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30'
                       : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/50 bg-slate-50/60 dark:bg-slate-800/40'
@@ -1429,18 +1494,50 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       }
                     }}
                   />
+                  <input
+                    ref={folderInputRef}
+                    type="file"
+                    // @ts-ignore
+                    webkitdirectory=""
+                    directory=""
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        handleBatchFilesAdd(e.target.files);
+                      }
+                    }}
+                  />
 
-                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-indigo-100 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-xs">
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-xs">
                       <Files className="w-6 h-6" />
                     </div>
-                    <div className="text-center sm:text-left">
-                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        Klik untuk memilih atau tarik & lepas semua berkas (PNG / JPG / PDF) dari folder
+                    <div>
+                      <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200">
+                        Tarik & lepas satu folder penuh, atau pilih berkas sertifikat secara instan
                       </p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Format nama seperti <span className="font-mono text-indigo-600 dark:text-indigo-400">Sertifikat_Tri_Mulyani_S_A_P.png</span> langsung terbaca menjadi kolom nama peserta secara otomatis.
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        Format nama seperti <span className="font-mono text-indigo-600 dark:text-indigo-400">Sertifikat_Tri_Mulyani_S_A_P.png</span> langsung terbaca otomatis beserta pratinjaunya.
                       </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => batchFileInputRef.current?.click()}
+                        className="px-4 py-2 text-xs font-black rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                      >
+                        <Plus className="w-4 h-4 stroke-[3]" />
+                        <span>Pilih Berkas File</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => folderInputRef.current?.click()}
+                        className="px-4 py-2 text-xs font-black rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                      >
+                        <Files className="w-4 h-4" />
+                        <span>Pilih Satu Folder</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1501,7 +1598,12 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setBatchFiles([])}
+                        onClick={() => {
+                          batchFiles.forEach(item => {
+                            if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+                          });
+                          setBatchFiles([]);
+                        }}
                         className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline cursor-pointer px-1"
                       >
                         Hapus Semua
@@ -1527,8 +1629,8 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                         {filteredBatchFiles.map((item, idx) => {
                           const originalIdx = batchFiles.indexOf(item);
-                          const isPng = item.file.type.includes('png') || item.file.name.toLowerCase().endsWith('.png');
-                          const isPdf = item.file.type.includes('pdf') || item.file.name.toLowerCase().endsWith('.pdf');
+                          const isImage = item.file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp)$/i.test(item.file.name);
+                          const isPdf = item.file.type.includes('pdf') || /\.pdf$/i.test(item.file.name);
                           const currentItemTags = item.tags || item.suggestedTags || [item.category];
 
                           return (
@@ -1541,17 +1643,47 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                               {/* File name & info */}
                               <td className="py-2 px-3">
                                 <div className="flex items-center gap-2">
-                                  <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 text-[10px] font-bold ${
-                                    isPdf ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300'
-                                  }`}>
-                                    {isPdf ? 'PDF' : 'PNG'}
-                                  </div>
+                                  {isImage ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPreviewModalFile({ file: item.file, name: item.file.name, url: item.previewUrl });
+                                      }}
+                                      className="w-9 h-9 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0 hover:scale-105 transition-transform cursor-pointer relative group"
+                                      title="Klik untuk pratinjau gambar sertifikat"
+                                    >
+                                      <img
+                                        src={item.previewUrl}
+                                        alt={item.file.name}
+                                        className="w-full h-full object-cover"
+                                      />
+                                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[9px] font-bold">
+                                        Lihat
+                                      </div>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPreviewModalFile({ file: item.file, name: item.file.name, url: item.previewUrl });
+                                      }}
+                                      className={`w-9 h-9 rounded-lg flex flex-col items-center justify-center shrink-0 text-[9px] font-bold border border-slate-200 dark:border-slate-700 cursor-pointer hover:scale-105 transition-transform ${
+                                        isPdf ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300'
+                                      }`}
+                                      title="Klik untuk pratinjau berkas"
+                                    >
+                                      <FileText className="w-4 h-4 mb-0.5" />
+                                      <span>{isPdf ? 'PDF' : 'DOC'}</span>
+                                    </button>
+                                  )}
                                   <div className="min-w-0">
                                     <p className="font-medium text-slate-900 dark:text-slate-200 truncate max-w-[170px] text-[11px]" title={item.file.name}>
                                       {item.file.name}
                                     </p>
                                     <p className="text-[10px] text-slate-400">
-                                      {(item.file.size / 1024).toFixed(0)} KB
+                                      {(item.file.size / 1024).toFixed(0)} KB • <button type="button" onClick={() => {
+                                        setPreviewModalFile({ file: item.file, name: item.file.name, url: item.previewUrl });
+                                      }} className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold cursor-pointer">Pratinjau</button>
                                     </p>
                                   </div>
                                 </div>
@@ -1716,6 +1848,78 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
 
           </motion.div>
         </motion.div>
+      )}
+
+      {/* Preview Lightbox Modal */}
+      {previewModalFile && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white truncate max-w-md">
+                    Pratinjau: {previewModalFile.name}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {(previewModalFile.file.size / (1024 * 1024)).toFixed(2)} MB • {previewModalFile.file.type || 'Dokumen'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewModalFile(null)}
+                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="p-6 flex-1 overflow-auto bg-slate-950/5 flex items-center justify-center">
+              {(() => {
+                const isPreviewImage = previewModalFile.file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp)$/i.test(previewModalFile.name);
+                const isPreviewPdf = previewModalFile.file.type.includes('pdf') || /\.pdf$/i.test(previewModalFile.name);
+                return isPreviewImage && previewModalFile.url ? (
+                  <img
+                    src={previewModalFile.url}
+                    alt={previewModalFile.name}
+                    className="max-h-[60vh] max-w-full object-contain rounded-xl shadow-lg border border-slate-200 dark:border-slate-800"
+                  />
+                ) : isPreviewPdf && previewModalFile.url ? (
+                  <iframe
+                    src={previewModalFile.url}
+                    title={previewModalFile.name}
+                    className="w-full h-[60vh] rounded-xl border border-slate-200 dark:border-slate-800 bg-white"
+                  />
+                ) : (
+                  <div className="text-center py-12 space-y-3">
+                    <div className="w-16 h-16 rounded-2xl bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto">
+                      <FileText className="w-8 h-8" />
+                    </div>
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      Pratinjau langsung tidak tersedia untuk format file ini.
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Berkas siap diunggah dan disimpan ke Google Drive.
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewModalFile(null)}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 cursor-pointer"
+              >
+                Tutup Pratinjau
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </AnimatePresence>
   );

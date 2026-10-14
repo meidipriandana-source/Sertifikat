@@ -884,6 +884,9 @@ export function cleanAndFormatPersonName(raw: string): string {
 
   // Convert underscores and dashes to space
   str = str.replace(/[_\-]+/g, ' ').trim();
+  // Ensure spaces after commas and dots for attached tokens like Agustina,a.md.kep
+  str = str.replace(/,([^\s])/g, ', $1');
+  str = str.replace(/\.([a-zA-Z])/g, '. $1');
 
   // Tokenize and format
   const words = str.split(/\s+/).filter(Boolean);

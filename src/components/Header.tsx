@@ -71,7 +71,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header id="app-header" className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-2xs transition-colors">
+    <header id="app-header" className="bg-white/95 dark:bg-[#071f29]/95 backdrop-blur-md border-b border-slate-200/80 dark:border-[#103a4b] sticky top-0 z-30 shadow-2xs transition-colors">
       <div className="w-full max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-10">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between py-4 gap-4">
           
@@ -82,10 +82,10 @@ export const Header: React.FC<HeaderProps> = ({
                 Sertifikat Diklat RSUD dr.H.Jusuf.SK
               </h1>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
+            <p className="text-xs text-slate-500 dark:text-teal-200/70 font-medium flex items-center gap-1.5 mt-0.5">
               <span>Sistem Manajemen Sertifikat Digital</span>
               <span className="text-slate-300 dark:text-slate-600">•</span>
-              <span className="text-slate-600 dark:text-slate-300 font-semibold">Cloud Auto-Sync</span>
+              <span className="text-teal-600 dark:text-teal-400 font-semibold">Cloud Auto-Sync</span>
             </p>
           </div>
 
@@ -349,9 +349,9 @@ export const Header: React.FC<HeaderProps> = ({
               id="btn-open-upload-modal"
               onClick={onOpenUpload}
               type="button"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white active:scale-95 transition-all shadow-md shadow-indigo-100 dark:shadow-indigo-950/50 cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs sm:text-sm font-black bg-teal-500 hover:bg-teal-400 text-slate-950 active:scale-95 transition-all shadow-md shadow-teal-500/20 cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 stroke-[3]" />
               <span>Unggah File</span>
             </button>
 
