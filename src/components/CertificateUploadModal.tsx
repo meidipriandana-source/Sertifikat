@@ -2073,51 +2073,6 @@ export const CertificateUploadModal: React.FC<CertificateUploadModalProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                  Berkas Tersedia di Google Drive Connected:
-                </p>
-                <div className="max-h-60 overflow-y-auto space-y-2">
-                  {[
-                    { name: 'Sertifikat_Pelatihan_BHD_Agustina_A_Md_Kep.pdf', title: 'Pelatihan Bantuan Hidup Dasar (BHD)', recipientName: 'Agustina, A.Md.Kep', category: 'Pelatihan' },
-                    { name: 'Sertifikat_Emergency_Trauma_Ns_Siti_Rahmawati.pdf', title: 'Pelatihan Emergency & Trauma Care', recipientName: 'Ns. Siti Rahmawati, S.Kep', category: 'Pelatihan' },
-                    { name: 'Sertifikat_ICU_Kritis_dr_Ahmad_Fauzi.pdf', title: 'Pelatihan Keperawatan Kritis ICU', recipientName: 'dr. Ahmad Fauzi, Sp.An', category: 'Pelatihan' },
-                    { name: 'Sertifikat_PPI_Akreditasi_Maya_Indah.pdf', title: 'Pelatihan PPI & Manajemen Mutu RS', recipientName: 'Maya Indah, A.Md.Kes', category: 'Pelatihan' }
-                  ].map((sf, idx) => (
-                    <div
-                      key={`drive-sample-${idx}`}
-                      className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between hover:border-indigo-300 transition-colors"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                          <FileText className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white text-xs truncate">{sf.name}</p>
-                          <p className="text-[10px] text-slate-500">{sf.title} • {sf.recipientName}</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const blob = new Blob(["PDF content for " + sf.name], { type: 'application/pdf' });
-                          const fileObj = new File([blob], sf.name, { type: 'application/pdf' });
-
-                          if (uploadMode === 'single') {
-                            handleSingleFileChange(fileObj);
-                          } else {
-                            handleBatchFilesAdd([fileObj]);
-                          }
-                          setIsDrivePickerOpen(false);
-                        }}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] rounded-lg shrink-0 cursor-pointer"
-                      >
-                        Pilih Berkas
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           </div>
         </div>

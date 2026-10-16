@@ -218,8 +218,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     };
   });
 
-  // Calculated percentage of Google Drive free tier (15 GB)
-  const maxStorageBytes = 15 * 1024 * 1024 * 1024;
+  // Calculated percentage of Google Drive quota (30 GB)
+  const maxStorageBytes = 30 * 1024 * 1024 * 1024;
   const simulatedTotalWithDrive = totalSize + 1.2 * 1024 * 1024 * 1024;
   const storagePercentage = Math.min(Math.round((simulatedTotalWithDrive / maxStorageBytes) * 100), 100);
 
@@ -533,7 +533,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
               <div className="text-2xl sm:text-3xl font-black mt-0.5 tracking-tight text-white drop-shadow-sm">
                 {formatBytes(totalSize)}{' '}
-                <span className="text-sm font-normal text-amber-200/70">/ 15 GB</span>
+                <span className="text-sm font-normal text-amber-200/70">/ 30 GB</span>
               </div>
               <p className="text-xs text-slate-300 mt-1 font-semibold flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-purple-400" />
@@ -552,14 +552,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <Cloud className="w-3 h-3 text-amber-300" />
                 <span>Kapasitas Penyimpanan Cloud</span>
               </span>
-              <span className="text-amber-300 font-black">{Math.max(storagePercentage, 8)}%</span>
+              <span className="text-amber-300 font-black">{Math.max(storagePercentage, 4)}%</span>
             </div>
 
             {/* Storage Progress Meter with Soft Gold-to-Purple Shimmer Gradient */}
             <div className="w-full bg-black/40 h-3 rounded-full overflow-hidden p-0.5 backdrop-blur-xs border border-white/10">
               <div 
                 className="h-full rounded-full bg-gradient-to-r from-amber-400 via-fuchsia-400 to-purple-400 shadow-[0_0_14px_rgba(251,191,36,0.6)] transition-all duration-700"
-                style={{ width: `${Math.max(storagePercentage, 8)}%` }}
+                style={{ width: `${Math.max(storagePercentage, 4)}%` }}
               />
             </div>
 
@@ -568,7 +568,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 <span>Sync Cloud Drive Aktif</span>
               </span>
-              <span className="text-[10px] text-amber-200/80 font-mono">15 GB Kuota Gratis</span>
+              <span className="text-[10px] text-amber-200/80 font-mono">30 GB Google Drive</span>
             </div>
           </div>
 
