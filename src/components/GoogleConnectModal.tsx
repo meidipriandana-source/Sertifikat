@@ -233,16 +233,16 @@ export const GoogleConnectModal: React.FC<GoogleConnectModalProps> = ({
 
   const handleDemoConnect = () => {
     const dummyToken = 'gdrive_app_token_' + Math.random().toString(36).substring(2, 15);
-    saveAuthState(dummyToken, 7200, 'admin@sertifikat-digital.org');
+    saveAuthState(dummyToken, 7200, 'meidipriandana@gmail.com');
     onAuthStateChange({
       isConnected: true,
       accessToken: dummyToken,
-      userEmail: 'admin@sertifikat-digital.org',
+      userEmail: 'meidipriandana@gmail.com',
       expiresAt: Date.now() + 7200000
     });
     setStatusMessage({
       type: 'success',
-      text: 'Mode Cloud Storage Google Drive diaktifkan untuk sesi ini.'
+      text: 'Mode Cloud Storage Google Drive diaktifkan untuk sesi ini dengan akun meidipriandana@gmail.com.'
     });
   };
 
