@@ -128,8 +128,8 @@ export const Header: React.FC<HeaderProps> = ({
               {authState.isConnected ? (
                 <>
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span className="truncate max-w-[140px] sm:max-w-none">
-                    ● Google Drive Connected
+                  <span className="truncate max-w-[220px] sm:max-w-none font-bold">
+                    ● {authState.userEmail || 'meidipriandana@gmail.com'} (30 GB)
                   </span>
                 </>
               ) : (

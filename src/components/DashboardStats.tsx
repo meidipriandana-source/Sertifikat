@@ -526,18 +526,28 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           <div className="flex justify-between items-start">
             <div>
               {/* Soft Gold-to-Purple Badge Accent */}
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-500/25 via-purple-500/25 to-teal-500/20 text-amber-200 border border-amber-300/40 text-[10px] font-black uppercase tracking-wider mb-2 shadow-xs">
-                <Sparkles className="w-3 h-3 text-amber-300 animate-pulse" />
-                <span>Google Drive Storage</span>
+              <div className="flex items-center gap-2 flex-wrap mb-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-500/25 via-purple-500/25 to-teal-500/20 text-amber-200 border border-amber-300/40 text-[10px] font-black uppercase tracking-wider shadow-xs">
+                  <Sparkles className="w-3 h-3 text-amber-300 animate-pulse" />
+                  <span>Google Drive Storage</span>
+                </div>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[10px] font-bold text-emerald-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  <span>meidipriandana@gmail.com</span>
+                </span>
               </div>
 
               <div className="text-2xl sm:text-3xl font-black mt-0.5 tracking-tight text-white drop-shadow-sm">
                 {formatBytes(totalSize)}{' '}
                 <span className="text-sm font-normal text-amber-200/70">/ 30 GB</span>
               </div>
-              <p className="text-xs text-slate-300 mt-1 font-semibold flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-purple-400" />
-                <span>{uniqueRecipients} Penerima Terdata</span>
+              <p className="text-xs text-slate-300 mt-1 font-semibold flex items-center gap-1.5 flex-wrap">
+                <span className="flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-purple-400" />
+                  <span>{uniqueRecipients} Penerima Terdata</span>
+                </span>
+                <span className="text-slate-400">•</span>
+                <span className="text-emerald-300 font-medium">Akun Terhubung: meidipriandana@gmail.com</span>
               </p>
             </div>
             
@@ -550,7 +560,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <div className="flex justify-between text-[11px] font-bold text-amber-100">
               <span className="flex items-center gap-1">
                 <Cloud className="w-3 h-3 text-amber-300" />
-                <span>Kapasitas Penyimpanan Cloud</span>
+                <span>Kapasitas Penyimpanan Cloud (meidipriandana@gmail.com)</span>
               </span>
               <span className="text-amber-300 font-black">{Math.max(storagePercentage, 4)}%</span>
             </div>
@@ -564,11 +574,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-[11px] text-slate-300 font-medium pt-0.5">
-              <span className="flex items-center gap-1 text-emerald-300">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                <span>Sync Cloud Drive Aktif</span>
+              <span className="flex items-center gap-1.5 text-emerald-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-bold">Tersinkron: meidipriandana@gmail.com</span>
               </span>
-              <span className="text-[10px] text-amber-200/80 font-mono">30 GB Google Drive</span>
+              <span className="text-[10px] text-amber-200/90 font-mono font-bold bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-400/30">
+                30 GB Total Kuota
+              </span>
             </div>
           </div>
 

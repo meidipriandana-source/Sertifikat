@@ -683,6 +683,14 @@ export default function App() {
           showToast('Data sertifikat dari Google Drive berhasil disinkronkan!', 'success');
           loadData();
         }}
+        onOpenExport={() => {
+          setIsGoogleConnectOpen(false);
+          setIsExportOpen(true);
+        }}
+        onOpenRestore={() => {
+          setIsGoogleConnectOpen(false);
+          setIsRestoreOpen(true);
+        }}
       />
 
       <ExportModal

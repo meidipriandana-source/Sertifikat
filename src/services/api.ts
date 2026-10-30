@@ -217,7 +217,24 @@ export async function fetchCertificates(params?: {
       const { isJson, data } = await safeFetchJson(res);
 
       if (res.ok && isJson && data?.data) {
-        // Sync to local storage as metadata cache
+        const serverData: Certificate[] = data.data;
+        const local = getLocalCertificates();
+        const serverIdSet = new Set(serverData.map(c => c.id));
+        
+        // Find local items created on this device that are not on the server yet
+        const unsynced = local.filter(c => 
+          c && c.id &&
+          !serverIdSet.has(c.id) && 
+          !['cert-1', 'cert-2', 'cert-3', 'cert-4', 'cert-5'].includes(c.id)
+        );
+
+        if (unsynced.length > 0) {
+          // Sync them to server database so office and home devices stay in sync
+          restoreCertificates(unsynced, 'merge').catch(err => 
+            console.warn('Background sync of local certificates to server:', err)
+          );
+        }
+
         const hasFilters = Boolean(
           params?.search || 
           (params?.category && params.category !== 'Semua') || 
@@ -227,9 +244,10 @@ export async function fetchCertificates(params?: {
         );
 
         if (!hasFilters) {
-          saveLocalCertificates(data.data);
+          const combined = unsynced.length > 0 ? [...serverData, ...unsynced] : serverData;
+          saveLocalCertificates(combined);
         } else {
-          mergeIntoLocalCertificates(data.data);
+          mergeIntoLocalCertificates(serverData);
         }
 
         return { ...data, fromCache: false };
@@ -1500,3 +1518,205 @@ export async function resetCategories(): Promise<CategoryItem[]> {
   saveLocalCategories(DEFAULT_CATEGORIES);
   return DEFAULT_CATEGORIES;
 }
+
+export async function syncLocalCertificatesWithServer(): Promise<{
+  syncedCount: number;
+  totalServerCount: number;
+  message: string;
+}> {
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  if (!isOnline) {
+    throw new Error('Tidak ada koneksi internet. Sinkronisasi cloud memerlukan koneksi online.');
+  }
+
+  const local = getLocalCertificates();
+  
+  // 1. Fetch server data
+  const res = await fetch(`${API_BASE}/certificates`);
+  const { isJson, data } = await safeFetchJson(res);
+  if (!res.ok || !isJson || !data?.data) {
+    throw new Error('Gagal menghubungi server database pusat.');
+  }
+
+  const serverCerts: Certificate[] = data.data;
+  const serverIdSet = new Set(serverCerts.map(c => c.id));
+
+  // 2. Find local certs created on this device not yet on server
+  const unsynced = local.filter(c => 
+    c && c.id && 
+    !serverIdSet.has(c.id) && 
+    !['cert-1', 'cert-2', 'cert-3', 'cert-4', 'cert-5'].includes(c.id)
+  );
+
+  let newlySynced = 0;
+  if (unsynced.length > 0) {
+    const restoreRes = await restoreCertificates(unsynced, 'merge');
+    newlySynced = restoreRes.totalRestored || unsynced.length;
+  }
+
+  // 3. Re-fetch to ensure local cache has exact server data
+  const finalRes = await fetch(`${API_BASE}/certificates`);
+  const finalJson = await safeFetchJson(finalRes);
+  const finalServerCerts: Certificate[] = (finalJson.isJson && finalJson.data?.data) ? finalJson.data.data : serverCerts;
+
+  saveLocalCertificates(finalServerCerts);
+
+  return {
+    syncedCount: newlySynced,
+    totalServerCount: finalServerCerts.length,
+    message: newlySynced > 0
+      ? `✓ Berhasil menyinkronkan ${newlySynced} data lokal ke server cloud! Total ${finalServerCerts.length} data kini siap diakses di semua perangkat (kantor & rumah).`
+      : `✓ Sinkronisasi aktif! Semua ${finalServerCerts.length} data sertifikat telah mutakhir dan tersinkronisasi penuh dengan server cloud.`
+  };
+}
+
+export interface CustomServerSyncResult {
+  success: boolean;
+  message: string;
+  statusCode?: number;
+  latencyMs?: number;
+  reachable?: boolean;
+  totalPushed?: number;
+  totalPulled?: number;
+}
+
+export async function testCustomServer(serverUrl: string, apiKey?: string): Promise<CustomServerSyncResult> {
+  try {
+    const res = await fetch(`${API_BASE}/custom-server/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serverUrl, apiKey })
+    });
+    const { isJson, data } = await safeFetchJson(res);
+    if (isJson && data) {
+      return data;
+    }
+    throw new Error('Respons server tidak dikenali.');
+  } catch (err: any) {
+    // Client-side direct fallback ping (in case server is on hospital LAN)
+    try {
+      const cleanUrl = serverUrl.trim().startsWith('http://') || serverUrl.trim().startsWith('https://')
+        ? serverUrl.trim()
+        : `http://${serverUrl.trim()}`;
+      const startTime = Date.now();
+      await fetch(cleanUrl, { method: 'HEAD', mode: 'no-cors' });
+      const latency = Date.now() - startTime;
+      return {
+        success: true,
+        reachable: true,
+        latencyMs: latency,
+        message: `✓ Terhubung langsung dari jaringan lokal browser ke ${cleanUrl} (${latency}ms)!`
+      };
+    } catch (browserErr: any) {
+      return {
+        success: false,
+        reachable: false,
+        message: `Gagal menghubungi ${serverUrl}: ${err.message || browserErr?.message}`
+      };
+    }
+  }
+}
+
+export async function pushToCustomServer(serverUrl: string, apiKey?: string): Promise<CustomServerSyncResult> {
+  const localCerts = getLocalCertificates();
+  try {
+    const res = await fetch(`${API_BASE}/custom-server/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serverUrl, apiKey })
+    });
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data) {
+      return data;
+    }
+    if (data?.message) throw new Error(data.message);
+  } catch (backendErr) {
+    console.warn('Backend push failed, attempting direct browser push (intranet):', backendErr);
+  }
+
+  // Direct Browser Push Fallback (for local LAN RSUD / Intranet)
+  try {
+    const cleanUrl = serverUrl.trim().startsWith('http://') || serverUrl.trim().startsWith('https://')
+      ? serverUrl.trim()
+      : `http://${serverUrl.trim()}`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const res = await fetch(cleanUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        source: 'Sertifikat Diklat RSUD dr.H.Jusuf.SK',
+        timestamp: new Date().toISOString(),
+        total: localCerts.length,
+        certificates: localCerts
+      })
+    });
+
+    if (res.ok) {
+      return {
+        success: true,
+        totalPushed: localCerts.length,
+        message: `✓ Berhasil mengirim ${localCerts.length} sertifikat langsung dari browser ke server ${cleanUrl}!`
+      };
+    } else {
+      const txt = await res.text();
+      throw new Error(`Server ${cleanUrl} mengembalikan status ${res.status}: ${txt.slice(0, 150)}`);
+    }
+  } catch (err: any) {
+    throw new Error(`Gagal mengirim data ke ${serverUrl}: ${err.message}`);
+  }
+}
+
+export async function pullFromCustomServer(serverUrl: string, apiKey?: string, mode: 'merge' | 'replace' = 'merge'): Promise<CustomServerSyncResult> {
+  try {
+    const res = await fetch(`${API_BASE}/custom-server/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serverUrl, apiKey, mode })
+    });
+    const { isJson, data } = await safeFetchJson(res);
+    if (res.ok && isJson && data?.success) {
+      if (Array.isArray(data.data)) {
+        saveLocalCertificates(data.data);
+      }
+      return data;
+    }
+    if (data?.message) throw new Error(data.message);
+  } catch (backendErr) {
+    console.warn('Backend pull failed, attempting direct browser pull (intranet):', backendErr);
+  }
+
+  // Direct Browser Pull Fallback
+  try {
+    const cleanUrl = serverUrl.trim().startsWith('http://') || serverUrl.trim().startsWith('https://')
+      ? serverUrl.trim()
+      : `http://${serverUrl.trim()}`;
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const res = await fetch(cleanUrl, { method: 'GET', headers });
+    if (!res.ok) throw new Error(`Status ${res.status}: ${res.statusText}`);
+
+    const incoming = await res.json();
+    const certsArray = Array.isArray(incoming) ? incoming : incoming?.certificates || incoming?.data || [];
+    if (!Array.isArray(certsArray) || certsArray.length === 0) {
+      return {
+        success: true,
+        totalPulled: 0,
+        message: `Terhubung ke ${cleanUrl}, namun tidak ada daftar sertifikat yang diterima.`
+      };
+    }
+
+    await restoreCertificates(certsArray, mode);
+    return {
+      success: true,
+      totalPulled: certsArray.length,
+      message: `✓ Berhasil menarik ${certsArray.length} data sertifikat langsung dari server ${cleanUrl}!`
+    };
+  } catch (err: any) {
+    throw new Error(`Gagal menarik data dari server ${serverUrl}: ${err.message}`);
+  }
+}
+
+
